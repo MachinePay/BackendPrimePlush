@@ -12,12 +12,18 @@
   "license": "ISC",
   "type": "commonjs",
   "dependencies": {
+    "@tailwindcss/vite": "^4.1.18",
+    "bcryptjs": "^3.0.3",
     "body-parser": "^2.2.2",
     "cors": "^2.8.6",
+    "dotenv": "^17.2.3",
     "express": "^5.2.1",
     "pg": "^8.17.2",
     "pg-hstore": "^2.3.4",
+    "react-router": "^7.13.0",
+    "react-router-dom": "^7.13.0",
     "sequelize": "^6.37.7",
+    "tailwindcss": "^4.1.18",
     "uuid": "^13.0.0"
   }
 }
