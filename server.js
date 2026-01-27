@@ -1,9 +1,16 @@
 const sequelize = require("./db");
 const express = require("express");
 const cors = require("cors");
+
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+// Log de todas as requisições recebidas
+app.use((req, res, next) => {
+  console.log(`[${new Date().toISOString()}] ${req.method} ${req.originalUrl}`);
+  next();
+});
 
 // Importa todos os models para garantir sincronização
 require("./models");
