@@ -1,18 +1,11 @@
 const sequelize = require("./db");
 const express = require("express");
 const cors = require("cors");
-const mongoose = require("mongoose");
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-mongoose.connect(
-  process.env.MONGO_URL || "mongodb://localhost:27017/primeplush",
-  {
-    useNewUrlParser: true,
-    useUnifiedTopology: true,
-  },
-);
+
 
 // Rotas
 const productRoutes = require("./routes/productRoutes");
