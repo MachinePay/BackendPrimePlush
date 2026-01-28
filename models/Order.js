@@ -24,8 +24,8 @@ const OrderProduct = sequelize.define("OrderProduct", {
   costPrice: { type: DataTypes.FLOAT, allowNull: false },
 });
 
-User.hasMany(Order);
-Order.belongsTo(User);
+User.hasMany(Order, { foreignKey: "userId" });
+Order.belongsTo(User, { foreignKey: "userId" });
 
 Order.belongsToMany(Product, { through: OrderProduct });
 Product.belongsToMany(Order, { through: OrderProduct });
