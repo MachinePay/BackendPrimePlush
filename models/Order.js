@@ -27,7 +27,13 @@ const OrderProduct = sequelize.define("OrderProduct", {
 User.hasMany(Order, { foreignKey: "userId" });
 Order.belongsTo(User, { foreignKey: "userId" });
 
-Order.belongsToMany(Product, { through: OrderProduct });
-Product.belongsToMany(Order, { through: OrderProduct });
+Order.belongsToMany(Product, { through: OrderProduct, foreignKey: "orderId" });
+Product.belongsToMany(Order, {
+  through: OrderProduct,
+  foreignKey: "productId",
+});
+
+OrderProduct.belongsTo(Order, { foreignKey: "orderId" });
+OrderProduct.belongsTo(Product, { foreignKey: "productId" });
 
 module.exports = { Order, OrderProduct };
