@@ -697,101 +697,16 @@ app.post("/api/auth/login", (req, res) => {
   }
 });
 
-// ========== MIDDLEWARE MULTI-TENANCY ==========
-// Extrai e valida o storeId de cada requisição
-const extractStoreId = (req, res, next) => {
-  const requestPath = req.path;
-  const requestMethod = req.method;
-
-  console.log(`🔍 [MIDDLEWARE] ${requestMethod} ${requestPath}`);
-  console.log(`🔍 [MIDDLEWARE] x-store-id header:`, req.headers["x-store-id"]);
-  console.log(
-    `🔍 [MIDDLEWARE] Authorization header presente:`,
-    !!req.headers["authorization"],
-  );
-
-  // Verifica se é uma rota que não precisa de storeId (rotas globais/públicas)
-  const publicRoutes = [
-    "/",
-    "/health",
-    "/favicon.ico", // Favicon do navegador
-    "/api/auth/login",
-    "/api/webhooks/mercadopago",
-    "/api/notifications/mercadopago",
-    "/api/super-admin/dashboard", // Super Admin tem acesso global
-    "/api/point/configure",
-    "/api/point/status",
-    "/api/ai/suggestion", // IA: Sugestões de produtos
-    "/api/ai/chat", // IA: Chat geral
-    "/api/ai/kitchen-priority", // IA: Priorização de pedidos
-    "/api/ai/inventory-analysis", // IA: Análise de estoque (admin)
-    "/api/users/check-cpf", // Usuários: Verificar CPF
-    "/api/users/register", // Usuários: Cadastro
-    "/api/payment/create-pix", // Pagamentos: Criar PIX
-    "/api/payment/create", // Pagamentos: Criar pagamento
-    "/api/payment/clear-queue", // Pagamentos: Limpar fila
-    "/api/debug/orders", // DEBUG: Ver todos os pedidos
-    "/api/user-orders", // Histórico de pedidos do usuário
-  ];
-
-  // Extrai storeId SEMPRE (antes de validar qualquer coisa)
-  const storeId = req.headers["x-store-id"] || req.query.storeId;
-  if (storeId) {
-    req.storeId = storeId;
-    console.log(`✅ [MIDDLEWARE] storeId anexado ao request: ${storeId}`);
-  }
-
-  // Se for rota pública, pula validação (match EXATO apenas)
-  if (publicRoutes.includes(req.path)) {
-    console.log(`✅ [MIDDLEWARE] Rota pública, pulando validação`);
-    return next();
-  }
-
-  // Verifica rotas dinâmicas (com parâmetros)
-  const publicRoutesPatterns = [
-    /^\/api\/payment\/status\/.+$/, // /api/payment/status/:paymentId
-    /^\/api\/payment\/status-pix\/.+$/, // /api/payment/status-pix/:orderId
-    /^\/api\/payment\/cancel\/.+$/, // /api/payment/cancel/:paymentId
-    /^\/api\/users\/cpf\/.+$/, // /api/users/cpf/:cpf
-    /^\/api\/super-admin\/store\/.+\/top-products$/, // Super Admin: Top produtos
-    /^\/api\/super-admin\/store\/.+\/sales-history$/, // Super Admin: Histórico vendas
-  ];
-
-  if (publicRoutesPatterns.some((pattern) => pattern.test(req.path))) {
-    console.log(`✅ [MIDDLEWARE] Rota dinâmica pública, pulando validação`);
-    return next();
-  }
-
-  if (!storeId) {
-    console.log(`❌ [MIDDLEWARE] storeId ausente para ${req.path}!`);
-    console.log(`❌ [MIDDLEWARE] Esta rota NÃO está nas listas de exceção`);
-    return res.status(400).json({
-      error:
-        "storeId é obrigatório. Envie via header 'x-store-id' ou query param 'storeId'",
-    });
-  }
-
-  next();
-};
-
-// ========== APLICA MIDDLEWARE MULTI-TENANCY ==========
-// IMPORTANTE: Deve vir ANTES de todas as rotas da API
-app.use(extractStoreId);
+// MODO SINGLE-TENANT: Middleware de storeId removido
 
 // --- Rotas da API (Menu, Usuários, Pedidos) ---
 
 app.get("/api/menu", async (req, res) => {
   try {
-    console.log(`📋 [GET /api/menu] Store ID recebido: ${req.storeId}`);
-
-    // MULTI-TENANCY: Filtra produtos por store_id
-    const products = await db("products")
-      .where({ store_id: req.storeId })
-      .select("*")
-      .orderBy("id");
-
+    // SINGLE-TENANT: Retorna todos os produtos
+    const products = await db("products").select("*").orderBy("id");
     console.log(
-      `✅ [GET /api/menu] Retornando ${products.length} produtos da loja ${req.storeId}`,
+      `✅ [GET /api/menu] Retornando ${products.length} produtos (single-tenant)`,
     );
 
     res.json(
