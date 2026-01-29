@@ -790,26 +790,15 @@ app.delete(
   },
 );
 
-// ========== CRUD DE CATEGORIAS (Multi-tenancy) ==========
+// ========== CRUD DE CATEGORIAS (Single-tenant) ==========
 
-// Listar categorias da loja
+// Listar categorias
 app.get("/api/categories", async (req, res) => {
   try {
-    const storeId = req.storeId;
-
-    if (!storeId) {
-      return res.status(400).json({ error: "Store ID obrigatório" });
-    }
-
     const categories = await db("categories")
-      .where({ store_id: storeId })
+      .select("id", "name", "icon", "order", "created_at")
       .orderBy("order", "asc")
       .orderBy("name", "asc");
-
-    console.log(
-      `📂 [GET /api/categories] ${categories.length} categorias da loja ${storeId}`,
-    );
-
     res.json(categories);
   } catch (e) {
     console.error("❌ Erro ao buscar categorias:", e);
@@ -824,44 +813,27 @@ app.post(
   authorizeAdmin,
   async (req, res) => {
     const { name, icon, order } = req.body;
-
     if (!name) {
       return res.status(400).json({ error: "Nome da categoria é obrigatório" });
     }
-
     try {
-      const storeId = req.storeId;
-
-      if (!storeId) {
-        return res.status(400).json({ error: "Store ID obrigatório" });
-      }
-
-      // Verifica se categoria já existe na loja
+      // Verifica se categoria já existe
       const exists = await db("categories")
-        .where({ name, store_id: storeId })
+        .where({ name: name.trim() })
         .first();
-
       if (exists) {
         return res.status(409).json({
-          error: "Categoria já existe nesta loja",
+          error: "Categoria já existe",
           category: exists,
         });
       }
-
       const newCategory = {
         id: `cat_${Date.now()}`,
         name: name.trim(),
         icon: icon || "📦",
         order: order || 0,
-        store_id: storeId,
       };
-
       await db("categories").insert(newCategory);
-
-      console.log(
-        `✅ [POST /api/categories] Categoria criada: ${name} (${storeId})`,
-      );
-
       res.status(201).json(newCategory);
     } catch (e) {
       console.error("❌ Erro ao criar categoria:", e);
@@ -878,42 +850,21 @@ app.put(
   async (req, res) => {
     const { id } = req.params;
     const { name, icon, order } = req.body;
-
     try {
-      const storeId = req.storeId;
-
-      if (!storeId) {
-        return res.status(400).json({ error: "Store ID obrigatório" });
-      }
-
-      // Verifica se categoria existe na loja
-      const exists = await db("categories")
-        .where({ id, store_id: storeId })
-        .first();
-
+      // Verifica se categoria existe
+      const exists = await db("categories").where({ id }).first();
       if (!exists) {
-        return res
-          .status(404)
-          .json({ error: "Categoria não encontrada nesta loja" });
+        return res.status(404).json({ error: "Categoria não encontrada" });
       }
-
       const updates = {};
       if (name !== undefined) updates.name = name.trim();
       if (icon !== undefined) updates.icon = icon;
       if (order !== undefined) updates.order = order;
-
       if (Object.keys(updates).length === 0) {
         return res.status(400).json({ error: "Nenhum campo para atualizar" });
       }
-
-      await db("categories").where({ id, store_id: storeId }).update(updates);
-
+      await db("categories").where({ id }).update(updates);
       const updated = await db("categories").where({ id }).first();
-
-      console.log(
-        `✅ [PUT /api/categories/${id}] Categoria atualizada (${storeId})`,
-      );
-
       res.json(updated);
     } catch (e) {
       console.error("❌ Erro ao atualizar categoria:", e);
@@ -929,44 +880,24 @@ app.delete(
   authorizeAdmin,
   async (req, res) => {
     const { id } = req.params;
-
     try {
-      const storeId = req.storeId;
-
-      if (!storeId) {
-        return res.status(400).json({ error: "Store ID obrigatório" });
-      }
-
-      // Verifica se categoria existe na loja
-      const exists = await db("categories")
-        .where({ id, store_id: storeId })
-        .first();
-
+      // Verifica se categoria existe
+      const exists = await db("categories").where({ id }).first();
       if (!exists) {
-        return res
-          .status(404)
-          .json({ error: "Categoria não encontrada nesta loja" });
+        return res.status(404).json({ error: "Categoria não encontrada" });
       }
-
       // Verifica se há produtos usando essa categoria
       const productsCount = await db("products")
-        .where({ category: exists.name, store_id: storeId })
+        .where({ category: exists.name })
         .count("id as count")
         .first();
-
       if (Number(productsCount.count) > 0) {
         return res.status(409).json({
           error: `Não é possível deletar. Existem ${productsCount.count} produtos usando esta categoria.`,
           productsCount: Number(productsCount.count),
         });
       }
-
-      await db("categories").where({ id, store_id: storeId }).del();
-
-      console.log(
-        `✅ [DELETE /api/categories/${id}] Categoria deletada (${storeId})`,
-      );
-
+      await db("categories").where({ id }).del();
       res.json({ success: true, message: "Categoria deletada com sucesso" });
     } catch (e) {
       console.error("❌ Erro ao deletar categoria:", e);
