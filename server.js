@@ -3986,95 +3986,40 @@ app.get("/api/super-admin/dashboard", async (req, res) => {
   try {
     // Verifica autenticação de Super Admin via header
     const superAdminPassword = req.headers["x-super-admin-password"];
-
     if (!SUPER_ADMIN_PASSWORD) {
       return res.status(503).json({
         error:
           "Super Admin não configurado. Defina SUPER_ADMIN_PASSWORD no servidor.",
       });
     }
-
     if (superAdminPassword !== SUPER_ADMIN_PASSWORD) {
       return res.status(401).json({
         error: "Acesso negado. Senha de Super Admin inválida.",
       });
     }
-
     console.log("🔐 Super Admin acessando dashboard global...");
-
-    // 1. Lista todas as store_id ativas (com pedidos ou produtos)
-    // ...existing code...
-      .distinct("store_id")
-      .whereNotNull("store_id");
-
-    // ...existing code...
-      .distinct("store_id")
-      .whereNotNull("store_id");
-
-    // Combina e remove duplicatas
-    const allStoreIds = [
-      ...new Set([
-        // ...existing code...
-      ]),
-    ];
-
-    // 2. Calcula estatísticas por loja
-    // ...existing code...
-      allStoreIds.map(async (storeId) => {
-        // Total de pedidos
-        const orderCount = await db("orders")
-          .where({ store_id: storeId })
-          .count("id as count")
-          .first();
-
-        // Faturamento total (apenas pedidos pagos)
-        const revenue = await db("orders")
-          .where({ store_id: storeId })
-          .whereIn("paymentStatus", ["paid", "authorized"])
-          .sum("total as total")
-          .first();
-
-        // Total de produtos
-        const productCount = await db("products")
-          .where({ store_id: storeId })
-          .count("id as count")
-          .first();
-
-        // Pedidos ativos (na cozinha)
-        const activeOrders = await db("orders")
-          .where({ store_id: storeId, status: "active" })
-          .count("id as count")
-          .first();
-
-        return {
-          store_id: storeId,
-          total_orders: Number(orderCount.count) || 0,
-          total_revenue: parseFloat(revenue.total) || 0,
-          total_products: Number(productCount.count) || 0,
-          active_orders: Number(activeOrders.count) || 0,
-        };
-      }),
-    );
-
-    // 3. Estatísticas globais
+    // Single-tenant: estatísticas globais
+    const orderCount = await db("orders").count("id as count").first();
+    const revenue = await db("orders")
+      .whereIn("paymentStatus", ["paid", "authorized"])
+      .sum("total as total")
+      .first();
+    const productCount = await db("products").count("id as count").first();
+    const activeOrders = await db("orders")
+      .where({ status: "active" })
+      .count("id as count")
+      .first();
     const globalStats = {
-      // ...existing code...
-      total_orders: storeStats.reduce((sum, s) => sum + s.total_orders, 0),
-      total_revenue: storeStats.reduce((sum, s) => sum + s.total_revenue, 0),
-      total_products: storeStats.reduce((sum, s) => sum + s.total_products, 0),
-      total_active_orders: storeStats.reduce(
-        (sum, s) => sum + s.active_orders,
-        0,
-      ),
+      total_orders: Number(orderCount.count) || 0,
+      total_revenue: parseFloat(revenue.total) || 0,
+      total_products: Number(productCount.count) || 0,
+      total_active_orders: Number(activeOrders.count) || 0,
     };
-
-    console.log(`✅ Dashboard gerado: ${allStoreIds.length} loja(s) ativa(s)`);
-
+    console.log(`✅ Dashboard gerado: single-tenant`);
     res.json({
       success: true,
       timestamp: new Date().toISOString(),
       global_stats: globalStats,
-      // ...existing code...
     });
   } catch (error) {
     console.error("❌ Erro no Super Admin Dashboard:", error);
@@ -4245,8 +4190,12 @@ app.get("/api/admin/update-sushiman1-credentials", async (req, res) => {
       "APP_USR-2380991543282785-120915-186724196695d70b571258710e1f9645-272635919";
     const newDeviceId = "GERTEC_MP35P__8701012151238699";
 
-    // Atualiza no banco
     // Loja única: não atualiza mais tabela stores
+    // Se necessário, atualize as variáveis de ambiente manualmente na Render
+    res.json({
+      success: true,
+      message:
+        "Loja única: atualize as credenciais nas variáveis de ambiente da Render.",
       mp_access_token: newAccessToken,
       mp_device_id: newDeviceId,
     });
