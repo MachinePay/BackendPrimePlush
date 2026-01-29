@@ -1,11 +1,10 @@
 import * as paymentService from "../services/paymentService.js";
 
-
-
 /**
  * POST /api/payment/create-pix
  * Criar pagamento PIX (QR Code)
  */
+export async function createPix(req, res) {
   try {
     const { amount, description, orderId, email, payerName } = req.body;
     if (!amount) {
@@ -13,7 +12,7 @@ import * as paymentService from "../services/paymentService.js";
     }
     const result = await paymentService.createPixPayment(
       { amount, description, orderId, email, payerName },
-      req.store
+      req.store,
     );
     return res.json(result);
   } catch (error) {
@@ -28,6 +27,7 @@ import * as paymentService from "../services/paymentService.js";
  * POST /api/payment/create
  * Criar pagamento com cartão via Point
  */
+export async function createCard(req, res) {
   try {
     const { amount, description, orderId } = req.body;
     if (!amount) {
@@ -40,7 +40,7 @@ import * as paymentService from "../services/paymentService.js";
     }
     const result = await paymentService.createCardPayment(
       { amount, description, orderId },
-      req.store
+      req.store,
     );
     return res.json(result);
   } catch (error) {
@@ -55,6 +55,7 @@ import * as paymentService from "../services/paymentService.js";
  * GET /api/payment/status/:paymentId
  * Verificar status de pagamento
  */
+export async function checkStatus(req, res) {
   try {
     const { paymentId } = req.params;
     if (!paymentId) {
@@ -62,7 +63,7 @@ import * as paymentService from "../services/paymentService.js";
     }
     const result = await paymentService.checkPaymentStatus(
       paymentId,
-      req.store
+      req.store,
     );
     return res.json(result);
   } catch (error) {
@@ -77,6 +78,7 @@ import * as paymentService from "../services/paymentService.js";
  * DELETE /api/payment/cancel/:paymentId
  * Cancelar pagamento
  */
+export async function cancel(req, res) {
   try {
     const { paymentId } = req.params;
     if (!paymentId) {
@@ -96,6 +98,7 @@ import * as paymentService from "../services/paymentService.js";
  * POST /api/payment/point/configure
  * Configurar Point em modo PDV
  */
+export async function configurePoint(req, res) {
   try {
     if (!req.store.mp_device_id) {
       return res
@@ -116,6 +119,7 @@ import * as paymentService from "../services/paymentService.js";
  * GET /api/payment/point/status
  * Obter status da Point
  */
+export async function getPointStatus(req, res) {
   try {
     if (!req.store.mp_device_id) {
       return res
@@ -136,6 +140,7 @@ import * as paymentService from "../services/paymentService.js";
  * POST /api/payment/clear-queue
  * Limpar fila de pagamentos pendentes
  */
+export async function clearQueue(req, res) {
   try {
     if (!req.store.mp_device_id) {
       return res
