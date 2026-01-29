@@ -422,15 +422,11 @@ async function initDatabase() {
 // --- Middlewares ---
 
 // Permissões CORS para web e apps móveis (Capacitor)
+
 const allowedOrigins = [
-  "https://pastel1.selfmachine.com.br",
-  "https://admin.selfmachine.com.br",
-  "https://sushiman1.selfmachine.com.br",
-  "https://localhost", // Capacitor Android
-  "capacitor://localhost", // Capacitor iOS
-  "http://localhost:3000", // Desenvolvimento web local
-  "http://localhost:5173", // Vite dev server
-];
+  "http://localhost:3000",
+  process.env.FRONTEND_URL,
+].filter(Boolean);
 
 app.use(
   cors({
@@ -441,7 +437,7 @@ app.use(
         return callback(null, true);
       } else {
         console.warn(`CORS bloqueado para origem: ${origin}`);
-        return callback(null, false);
+        return callback(new Error("Not allowed by CORS"));
       }
     },
     methods: ["GET", "POST", "DELETE", "PUT", "OPTIONS"],
