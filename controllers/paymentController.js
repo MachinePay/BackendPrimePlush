@@ -6,10 +6,17 @@ import * as paymentService from "../services/paymentService.js";
  */
 export async function createPix(req, res) {
   try {
-    const { amount, description, orderId, email, payerName } = req.body;
+    const { amount, description, orderId, email, payerName, paymentType } =
+      req.body;
     if (!amount) {
       return res.status(400).json({ error: "Campo amount é obrigatório" });
     }
+    if (paymentType === "online") {
+      return res
+        .status(400)
+        .json({ error: "Pagamento online estará disponível em breve." });
+    }
+    // Default: presencial
     const result = await paymentService.createPixPayment(
       { amount, description, orderId, email, payerName },
       req.store,
@@ -29,9 +36,14 @@ export async function createPix(req, res) {
  */
 export async function createCard(req, res) {
   try {
-    const { amount, description, orderId } = req.body;
+    const { amount, description, orderId, paymentType } = req.body;
     if (!amount) {
       return res.status(400).json({ error: "Campo amount é obrigatório" });
+    }
+    if (paymentType === "online") {
+      return res
+        .status(400)
+        .json({ error: "Pagamento online estará disponível em breve." });
     }
     if (!req.store.mp_device_id) {
       return res
