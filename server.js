@@ -2145,7 +2145,7 @@ app.post("/api/payment/create-pix", async (req, res) => {
   // Busca credenciais da loja
   let MP_ACCESS_TOKEN, MP_DEVICE_ID;
   if (storeId) {
-    const store = await db("stores").where({ id: storeId }).first();
+    // Loja única: não busca mais na tabela stores
     if (store) {
       MP_ACCESS_TOKEN = store.mp_access_token;
       MP_DEVICE_ID = store.mp_device_id;
@@ -2355,7 +2355,7 @@ app.post("/api/payment/create-card", async (req, res) => {
   // Busca credenciais da loja
   let MP_ACCESS_TOKEN, MP_DEVICE_ID;
   if (storeId) {
-    const store = await db("stores").where({ id: storeId }).first();
+    // Loja única: não busca mais na tabela stores
     if (store) {
       MP_ACCESS_TOKEN = store.mp_access_token;
       MP_DEVICE_ID = store.mp_device_id;
@@ -2529,7 +2529,7 @@ app.get("/api/payment/status/:paymentId", async (req, res) => {
     // Busca credenciais da loja
     let storeConfig;
     if (storeId) {
-      const store = await db("stores").where({ id: storeId }).first();
+      // Loja única: não busca mais na tabela stores
       if (store) {
         storeConfig = {
           mp_access_token: store.mp_access_token,
@@ -2870,7 +2870,7 @@ app.delete("/api/payment/cancel/:paymentId", async (req, res) => {
   // Busca credenciais da loja
   let MP_ACCESS_TOKEN_LOCAL, MP_DEVICE_ID_LOCAL;
   if (storeId) {
-    const store = await db("stores").where({ id: storeId }).first();
+    // Loja única: não busca mais na tabela stores
     if (store) {
       MP_ACCESS_TOKEN_LOCAL = store.mp_access_token;
       MP_DEVICE_ID_LOCAL = store.mp_device_id;
@@ -2959,7 +2959,7 @@ app.post("/api/payment/clear-all", async (req, res) => {
   // Busca credenciais da loja
   let MP_ACCESS_TOKEN_LOCAL, MP_DEVICE_ID_LOCAL;
   if (storeId) {
-    const store = await db("stores").where({ id: storeId }).first();
+    // Loja única: não busca mais na tabela stores
     if (store) {
       MP_ACCESS_TOKEN_LOCAL = store.mp_access_token;
       MP_DEVICE_ID_LOCAL = store.mp_device_id;
@@ -3039,7 +3039,7 @@ app.post("/api/point/configure", async (req, res) => {
   // Busca credenciais da loja
   let MP_ACCESS_TOKEN_LOCAL, MP_DEVICE_ID_LOCAL;
   if (storeId) {
-    const store = await db("stores").where({ id: storeId }).first();
+    // Loja única: não busca mais na tabela stores
     if (store) {
       MP_ACCESS_TOKEN_LOCAL = store.mp_access_token;
       MP_DEVICE_ID_LOCAL = store.mp_device_id;
@@ -3106,7 +3106,7 @@ app.get("/api/point/status", async (req, res) => {
   // Busca credenciais da loja
   let MP_ACCESS_TOKEN_LOCAL, MP_DEVICE_ID_LOCAL;
   if (storeId) {
-    const store = await db("stores").where({ id: storeId }).first();
+    // Loja única: não busca mais na tabela stores
     if (store) {
       MP_ACCESS_TOKEN_LOCAL = store.mp_access_token;
       MP_DEVICE_ID_LOCAL = store.mp_device_id;
@@ -3175,7 +3175,7 @@ app.post("/api/payment/clear-queue", async (req, res) => {
   // Busca credenciais da loja
   let MP_ACCESS_TOKEN_LOCAL, MP_DEVICE_ID_LOCAL;
   if (storeId) {
-    const store = await db("stores").where({ id: storeId }).first();
+    // Loja única: não busca mais na tabela stores
     if (store) {
       MP_ACCESS_TOKEN_LOCAL = store.mp_access_token;
       MP_DEVICE_ID_LOCAL = store.mp_device_id;
@@ -3279,7 +3279,7 @@ app.post("/api/ai/suggestion", async (req, res) => {
     console.log(`🤖 [IA SUGGESTION] Loja: ${storeId}`);
 
     // Busca informações da loja
-    const store = await db("stores").where({ id: storeId }).first();
+    // Loja única: não busca mais na tabela stores
     const storeName = store?.name || storeId;
 
     console.log(`🏪 [IA SUGGESTION] Store encontrada:`, storeName);
@@ -3411,7 +3411,7 @@ app.post("/api/ai/chat", async (req, res) => {
     console.log(`🤖 [IA CHAT] Loja: ${storeId}`);
 
     // Busca informações da loja
-    const store = await db("stores").where({ id: storeId }).first();
+    // Loja única: não busca mais na tabela stores
     const storeName = store?.name || storeId;
 
     // Busca produtos da loja para contexto
@@ -3866,7 +3866,7 @@ app.get("/api/ai/inventory-analysis", async (req, res) => {
     };
 
     // Busca informações da loja para personalizar análise
-    const store = await db("stores").where({ id: storeId }).first();
+    // Loja única: não busca mais na tabela stores
     const storeName = store?.name || storeId;
 
     // Determina tipo de negócio
@@ -4003,24 +4003,23 @@ app.get("/api/super-admin/dashboard", async (req, res) => {
     console.log("🔐 Super Admin acessando dashboard global...");
 
     // 1. Lista todas as store_id ativas (com pedidos ou produtos)
-    const storesFromOrders = await db("orders")
+    // ...existing code...
       .distinct("store_id")
       .whereNotNull("store_id");
 
-    const storesFromProducts = await db("products")
+    // ...existing code...
       .distinct("store_id")
       .whereNotNull("store_id");
 
     // Combina e remove duplicatas
     const allStoreIds = [
       ...new Set([
-        ...storesFromOrders.map((s) => s.store_id),
-        ...storesFromProducts.map((s) => s.store_id),
+        // ...existing code...
       ]),
     ];
 
     // 2. Calcula estatísticas por loja
-    const storeStats = await Promise.all(
+    // ...existing code...
       allStoreIds.map(async (storeId) => {
         // Total de pedidos
         const orderCount = await db("orders")
@@ -4059,7 +4058,7 @@ app.get("/api/super-admin/dashboard", async (req, res) => {
 
     // 3. Estatísticas globais
     const globalStats = {
-      total_stores: allStoreIds.length,
+      // ...existing code...
       total_orders: storeStats.reduce((sum, s) => sum + s.total_orders, 0),
       total_revenue: storeStats.reduce((sum, s) => sum + s.total_revenue, 0),
       total_products: storeStats.reduce((sum, s) => sum + s.total_products, 0),
@@ -4075,7 +4074,7 @@ app.get("/api/super-admin/dashboard", async (req, res) => {
       success: true,
       timestamp: new Date().toISOString(),
       global_stats: globalStats,
-      stores: storeStats.sort((a, b) => b.total_revenue - a.total_revenue), // Ordena por faturamento
+      // ...existing code...
     });
   } catch (error) {
     console.error("❌ Erro no Super Admin Dashboard:", error);
@@ -4247,13 +4246,13 @@ app.get("/api/admin/update-sushiman1-credentials", async (req, res) => {
     const newDeviceId = "GERTEC_MP35P__8701012151238699";
 
     // Atualiza no banco
-    await db("stores").where({ id: "sushiman1" }).update({
+    // Loja única: não atualiza mais tabela stores
       mp_access_token: newAccessToken,
       mp_device_id: newDeviceId,
     });
 
     // Verifica se foi atualizado
-    const updatedStore = await db("stores").where({ id: "sushiman1" }).first();
+    // Loja única: não busca mais na tabela stores
 
     console.log("✅ Credenciais do sushiman1 atualizadas com sucesso!");
     console.log(

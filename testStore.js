@@ -20,7 +20,7 @@ async function testStore() {
     console.log("🔍 Testando configuração da loja sushiman1...\n");
 
     // Buscar a loja
-    const store = await db("stores").where({ id: "sushiman1" }).first();
+    // Loja única: não busca mais na tabela stores
 
     if (!store) {
       console.error("❌ Loja 'sushiman1' não encontrada no banco!");
@@ -35,7 +35,7 @@ async function testStore() {
         store.mp_access_token
           ? store.mp_access_token.substring(0, 30) + "..."
           : "❌ NÃO CONFIGURADO"
-      }`
+      }`,
     );
     console.log(`   Device: ${store.mp_device_id || "❌ NÃO CONFIGURADO"}`);
 
@@ -56,7 +56,7 @@ async function testStore() {
         headers: {
           Authorization: `Bearer ${store.mp_access_token}`,
         },
-      }
+      },
     );
 
     if (!response.ok) {
@@ -100,7 +100,7 @@ async function testStore() {
       if (pixData.message?.includes("invalid")) {
         console.error("\n⚠️  Token inválido ou expirado!");
         console.error(
-          "Obtenha um novo token em: https://www.mercadopago.com.br/developers/panel"
+          "Obtenha um novo token em: https://www.mercadopago.com.br/developers/panel",
         );
       }
       return;
@@ -114,7 +114,7 @@ async function testStore() {
         pixData.point_of_interaction?.transaction_data?.qr_code
           ? "✅ Gerado"
           : "❌ Não gerado"
-      }`
+      }`,
     );
 
     console.log("\n" + "=".repeat(60));
