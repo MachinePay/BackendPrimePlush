@@ -1,3 +1,60 @@
+import express from "express";
+import fs from "fs/promises";
+import path from "path";
+import cors from "cors";
+import OpenAI from "openai";
+import knex from "knex";
+import jwt from "jsonwebtoken";
+import { createClient } from "redis";
+import paymentRoutes from "./routes/payment.js";
+import * as paymentService from "./services/paymentService.js";
+
+const app = express();
+const PORT = process.env.PORT || 3001;
+
+// --- Configurações ---
+const openai = process.env.OPENAI_API_KEY
+  ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+  : null;
+
+const MP_ACCESS_TOKEN = process.env.MP_ACCESS_TOKEN;
+const MP_DEVICE_ID = process.env.MP_DEVICE_ID;
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
+const KITCHEN_PASSWORD = process.env.KITCHEN_PASSWORD;
+const SUPER_ADMIN_PASSWORD = process.env.SUPER_ADMIN_PASSWORD;
+const JWT_SECRET = process.env.JWT_SECRET;
+const REDIS_URL = process.env.REDIS_URL;
+
+// --- Banco de Dados ---
+const dbConfig = process.env.DATABASE_URL
+  ? {
+      client: "pg",
+      connection: {
+        connectionString: process.env.DATABASE_URL,
+        ssl: { rejectUnauthorized: false },
+      },
+    }
+  : {
+      client: "sqlite3",
+      connection: {
+        filename: path.join(process.cwd(), "data", "kiosk.sqlite"),
+      },
+      useNullAsDefault: true,
+    };
+
+const db = knex(dbConfig);
+
+const parseJSON = (data) => {
+  if (typeof data === "string") {
+    try {
+      return JSON.parse(data);
+    } catch (e) {
+      return [];
+    }
+  }
+  return data || [];
+};
+
 // ========== SUPER ADMIN: RECEBÍVEIS E HISTÓRICO ==========
 // Tabela para histórico de recebimentos do super admin
 async function ensureSuperAdminReceivablesTable() {
