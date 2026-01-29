@@ -1,3 +1,127 @@
+// ========== SUPER ADMIN: RECEBÍVEIS E HISTÓRICO ==========
+// Tabela para histórico de recebimentos do super admin
+async function ensureSuperAdminReceivablesTable() {
+  const hasTable = await db.schema.hasTable("superadmin_receivables");
+  if (!hasTable) {
+    await db.schema.createTable("superadmin_receivables", (table) => {
+      table.increments("id").primary();
+      table.decimal("amount", 10, 2).notNullable();
+      table.timestamp("date").notNullable();
+    });
+    console.log("✅ Tabela superadmin_receivables criada");
+  }
+}
+ensureSuperAdminReceivablesTable();
+
+// Calcula o total a receber (soma de todos os pedidos pagos/approved: preço - preço bruto)
+async function calculateTotalToReceive() {
+  // Busca todos os pedidos pagos/approved
+  const orders = await db("orders")
+    .whereIn("paymentStatus", ["paid", "approved"])
+    .select("items");
+  let total = 0;
+  for (const order of orders) {
+    const items =
+      typeof order.items === "string" ? JSON.parse(order.items) : order.items;
+    for (const item of items) {
+      // Busca o produto para pegar priceRaw
+      const product = await db("products").where({ id: item.id }).first();
+      if (product) {
+        const price = parseFloat(item.price || product.price);
+        const priceRaw = parseFloat(product.priceRaw || 0);
+        total += (price - priceRaw) * (item.quantity || 1);
+      }
+    }
+  }
+  // Subtrai o que já foi recebido
+  const receivedRows = await db("superadmin_receivables").select("amount");
+  const alreadyReceived = receivedRows.reduce(
+    (sum, r) => sum + parseFloat(r.amount),
+    0,
+  );
+  return { totalToReceive: total - alreadyReceived };
+}
+
+// Endpoint: GET /api/super-admin/receivables
+app.get("/api/super-admin/receivables", authenticateToken, async (req, res) => {
+  // Só permite acesso se for superadmin
+  if (req.user?.role !== "superadmin")
+    return res.status(403).json({ error: "Acesso negado" });
+  try {
+    const stats = await calculateTotalToReceive();
+    const history = await db("superadmin_receivables").orderBy("date", "desc");
+    res.json({ stats, history });
+  } catch (e) {
+    res.status(500).json({ error: "Erro ao buscar stats do super admin" });
+  }
+});
+
+// Endpoint: POST /api/super-admin/receivables/mark-received
+app.post(
+  "/api/super-admin/receivables/mark-received",
+  authenticateToken,
+  async (req, res) => {
+    if (req.user?.role !== "superadmin")
+      return res.status(403).json({ error: "Acesso negado" });
+    try {
+      const { totalToReceive } = await calculateTotalToReceive();
+      if (totalToReceive <= 0)
+        return res.status(400).json({ error: "Nada a receber" });
+      await db("superadmin_receivables").insert({
+        amount: totalToReceive,
+        date: new Date().toISOString(),
+      });
+      res.json({ success: true, received: totalToReceive });
+    } catch (e) {
+      res.status(500).json({ error: "Erro ao registrar recebimento" });
+    }
+  },
+);
+// ========== HISTÓRICO DE PEDIDOS COM FILTRO DE DATA ==========
+// Endpoint: /api/orders/history?start=YYYY-MM-DD&end=YYYY-MM-DD
+app.get(
+  "/api/orders/history",
+  authenticateToken,
+  authorizeAdmin,
+  async (req, res) => {
+    try {
+      const storeId = req.storeId;
+      if (!storeId) {
+        return res.status(400).json({ error: "Store ID obrigatório." });
+      }
+
+      // Parâmetros de data (opcionais)
+      const { start, end } = req.query;
+      let query = db("orders")
+        .where({ store_id: storeId })
+        .orderBy("timestamp", "desc");
+
+      // Filtro por data (se fornecido)
+      if (start) {
+        query = query.where("timestamp", ">=", new Date(start).toISOString());
+      }
+      if (end) {
+        // Inclui o dia inteiro do 'end'
+        const endDate = new Date(end);
+        endDate.setHours(23, 59, 59, 999);
+        query = query.where("timestamp", "<=", endDate.toISOString());
+      }
+
+      const orders = await query.select("*");
+
+      res.json(
+        orders.map((o) => ({
+          ...o,
+          items: typeof o.items === "string" ? JSON.parse(o.items) : o.items,
+          total: parseFloat(o.total),
+        })),
+      );
+    } catch (e) {
+      console.error("Erro ao buscar histórico de pedidos:", e);
+      res.status(500).json({ error: "Erro ao buscar histórico de pedidos" });
+    }
+  },
+);
 import express from "express";
 import fs from "fs/promises";
 import path from "path";
@@ -175,16 +299,47 @@ async function initDatabase() {
     await db.schema.createTable("products", (table) => {
       table.string("id").primary();
       table.string("name").notNullable();
-      table.text("description");
       table.decimal("price", 8, 2).notNullable();
+      table.decimal("priceRaw", 8, 2).notNullable().defaultTo(0); // Preço bruto
       table.string("category").notNullable();
       table.string("videoUrl");
       table.boolean("popular").defaultTo(false);
       table.integer("stock"); // NULL = estoque ilimitado, 0 = esgotado
       table.integer("stock_reserved").defaultTo(0); // Estoque reservado temporariamente
+      table.integer("minStock").defaultTo(0); // Estoque mínimo
     });
   } else {
-    // Adiciona colunas que faltam se não existirem
+    // Remover coluna description se existir
+    const hasDescription = await db.schema.hasColumn("products", "description");
+    if (hasDescription) {
+      try {
+        await db.schema.table("products", (table) => {
+          table.dropColumn("description");
+        });
+        console.log("✅ Coluna description removida");
+      } catch (e) {
+        console.warn(
+          "⚠️ Não foi possível remover coluna description (pode ser limitação do SQLite)",
+        );
+      }
+    }
+    // Adiciona coluna priceRaw se não existir
+    const hasPriceRaw = await db.schema.hasColumn("products", "priceRaw");
+    if (!hasPriceRaw) {
+      await db.schema.table("products", (table) => {
+        table.decimal("priceRaw", 8, 2).notNullable().defaultTo(0);
+      });
+      console.log("✅ Coluna priceRaw adicionada");
+    }
+    // Adiciona coluna minStock se não existir
+    const hasMinStock = await db.schema.hasColumn("products", "minStock");
+    if (!hasMinStock) {
+      await db.schema.table("products", (table) => {
+        table.integer("minStock").defaultTo(0);
+      });
+      console.log("✅ Coluna minStock adicionada");
+    }
+    // ...existing code para stock_reserved e stock...
     const hasReservedColumn = await db.schema.hasColumn(
       "products",
       "stock_reserved",
@@ -195,8 +350,6 @@ async function initDatabase() {
       });
       console.log("✅ Coluna stock_reserved adicionada");
     }
-
-    // Migração: Adicionar coluna stock se não existir
     const hasStock = await db.schema.hasColumn("products", "stock");
     if (!hasStock) {
       await db.schema.table("products", (table) => {
@@ -510,6 +663,8 @@ app.post("/api/auth/login", (req, res) => {
     correctPassword = ADMIN_PASSWORD;
   } else if (role === "kitchen") {
     correctPassword = KITCHEN_PASSWORD;
+  } else if (role === "superadmin") {
+    correctPassword = SUPER_ADMIN_PASSWORD;
   } else {
     return res.status(400).json({ success: false, message: "Role inválido" });
   }
@@ -715,8 +870,17 @@ app.post(
   authenticateToken,
   authorizeAdmin,
   async (req, res) => {
-    const { id, name, description, price, category, videoUrl, popular, stock } =
-      req.body;
+    const {
+      id,
+      name,
+      price,
+      priceRaw,
+      category,
+      videoUrl,
+      popular,
+      stock,
+      minStock,
+    } = req.body;
 
     if (!name || !price || !category) {
       return res
@@ -728,12 +892,13 @@ app.post(
       const newProduct = {
         id: id || `prod_${Date.now()}`,
         name,
-        description: description || "",
         price: parseFloat(price),
+        priceRaw: priceRaw !== undefined ? parseFloat(priceRaw) : 0,
         category,
         videoUrl: videoUrl || "",
         popular: popular || false,
         stock: stock !== undefined ? parseInt(stock) : null, // null = ilimitado
+        minStock: minStock !== undefined ? parseInt(minStock) : 0,
         store_id: req.storeId, // MULTI-TENANCY: Associa produto à loja
       };
 
@@ -755,8 +920,16 @@ app.put(
   authorizeAdmin,
   async (req, res) => {
     const { id } = req.params;
-    const { name, description, price, category, videoUrl, popular, stock } =
-      req.body;
+    const {
+      name,
+      price,
+      priceRaw,
+      category,
+      videoUrl,
+      popular,
+      stock,
+      minStock,
+    } = req.body;
 
     try {
       // MULTI-TENANCY: Busca produto apenas da loja específica
@@ -771,13 +944,14 @@ app.put(
 
       const updates = {};
       if (name !== undefined) updates.name = name;
-      if (description !== undefined) updates.description = description;
       if (price !== undefined) updates.price = parseFloat(price);
+      if (priceRaw !== undefined) updates.priceRaw = parseFloat(priceRaw);
       if (category !== undefined) updates.category = category;
       if (videoUrl !== undefined) updates.videoUrl = videoUrl;
       if (popular !== undefined) updates.popular = popular;
       if (stock !== undefined)
         updates.stock = stock === null ? null : parseInt(stock);
+      if (minStock !== undefined) updates.minStock = parseInt(minStock);
 
       // MULTI-TENANCY: Atualiza apenas se pertencer à loja
       await db("products").where({ id, store_id: req.storeId }).update(updates);
@@ -3313,8 +3487,9 @@ app.post("/api/ai/suggestion", async (req, res) => {
     );
 
     // Determina o tipo de estabelecimento baseado no storeId ou nome
-    let storeType = "lanchonete";
-    let storeContext = "Você é um vendedor amigável";
+    let storeType = "loja de pelúcias";
+    let storeContext =
+      "Você é um vendedor PrimePlush, especialista em pelúcias.";
 
     if (
       storeId.includes("sushi") ||
@@ -3324,12 +3499,12 @@ app.post("/api/ai/suggestion", async (req, res) => {
       storeContext =
         "Você é um atendente especializado em culinária japonesa. Conheça bem sushi, sashimi, temaki, yakisoba e outros pratos orientais";
     } else if (
-      storeId.includes("pastel") ||
-      storeName.toLowerCase().includes("pastel")
+      storeId.includes("primeplush") ||
+      storeName.toLowerCase().includes("primeplush")
     ) {
-      storeType = "pastelaria";
+      storeType = "loja de pelúcias";
       storeContext =
-        "Você é um vendedor especializado em pastéis e salgados brasileiros. Conheça bem os sabores tradicionais e combinações";
+        "Você é um vendedor especializado em pelúcias e brinquedos PrimePlush. Conheça bem os modelos, tamanhos e novidades.";
     }
 
     console.log(`🤖 [IA SUGGESTION] Tipo de loja detectado: ${storeType}`);
