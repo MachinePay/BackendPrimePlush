@@ -55,187 +55,6 @@ const parseJSON = (data) => {
   return data || [];
 };
 
-// ========== SUPER ADMIN: RECEBÍVEIS E HISTÓRICO ==========
-// Tabela para histórico de recebimentos do super admin
-async function ensureSuperAdminReceivablesTable() {
-  const hasTable = await db.schema.hasTable("superadmin_receivables");
-  if (!hasTable) {
-    await db.schema.createTable("superadmin_receivables", (table) => {
-      table.increments("id").primary();
-      table.decimal("amount", 10, 2).notNullable();
-      table.timestamp("date").notNullable();
-    });
-    console.log("✅ Tabela superadmin_receivables criada");
-  }
-}
-ensureSuperAdminReceivablesTable();
-
-// Calcula o total a receber (soma de todos os pedidos pagos/approved: preço - preço bruto)
-async function calculateTotalToReceive() {
-  // Busca todos os pedidos pagos/approved
-  const orders = await db("orders")
-    .whereIn("paymentStatus", ["paid", "approved"])
-    .select("items");
-  let total = 0;
-  for (const order of orders) {
-    const items =
-      typeof order.items === "string" ? JSON.parse(order.items) : order.items;
-    for (const item of items) {
-      // Busca o produto para pegar priceRaw
-      const product = await db("products").where({ id: item.id }).first();
-      if (product) {
-        const price = parseFloat(item.price || product.price);
-        const priceRaw = parseFloat(product.priceRaw || 0);
-        total += (price - priceRaw) * (item.quantity || 1);
-      }
-    }
-  }
-  // Subtrai o que já foi recebido
-  const receivedRows = await db("superadmin_receivables").select("amount");
-  const alreadyReceived = receivedRows.reduce(
-    (sum, r) => sum + parseFloat(r.amount),
-    0,
-  );
-  return { totalToReceive: total - alreadyReceived };
-}
-
-// Endpoint: GET /api/super-admin/receivables
-app.get("/api/super-admin/receivables", authenticateToken, async (req, res) => {
-  // Só permite acesso se for superadmin
-  if (req.user?.role !== "superadmin")
-    return res.status(403).json({ error: "Acesso negado" });
-  try {
-    const stats = await calculateTotalToReceive();
-    const history = await db("superadmin_receivables").orderBy("date", "desc");
-    res.json({ stats, history });
-  } catch (e) {
-    res.status(500).json({ error: "Erro ao buscar stats do super admin" });
-  }
-});
-
-// Endpoint: POST /api/super-admin/receivables/mark-received
-app.post(
-  "/api/super-admin/receivables/mark-received",
-  authenticateToken,
-  async (req, res) => {
-    if (req.user?.role !== "superadmin")
-      return res.status(403).json({ error: "Acesso negado" });
-    try {
-      const { totalToReceive } = await calculateTotalToReceive();
-      if (totalToReceive <= 0)
-        return res.status(400).json({ error: "Nada a receber" });
-      await db("superadmin_receivables").insert({
-        amount: totalToReceive,
-        date: new Date().toISOString(),
-      });
-      res.json({ success: true, received: totalToReceive });
-    } catch (e) {
-      res.status(500).json({ error: "Erro ao registrar recebimento" });
-    }
-  },
-);
-// ========== HISTÓRICO DE PEDIDOS COM FILTRO DE DATA ==========
-// Endpoint: /api/orders/history?start=YYYY-MM-DD&end=YYYY-MM-DD
-app.get(
-  "/api/orders/history",
-  authenticateToken,
-  authorizeAdmin,
-  async (req, res) => {
-    try {
-      const storeId = req.storeId;
-      if (!storeId) {
-        return res.status(400).json({ error: "Store ID obrigatório." });
-      }
-
-      // Parâmetros de data (opcionais)
-      const { start, end } = req.query;
-      let query = db("orders")
-        .where({ store_id: storeId })
-        .orderBy("timestamp", "desc");
-
-      // Filtro por data (se fornecido)
-      if (start) {
-        query = query.where("timestamp", ">=", new Date(start).toISOString());
-      }
-      if (end) {
-        // Inclui o dia inteiro do 'end'
-        const endDate = new Date(end);
-        endDate.setHours(23, 59, 59, 999);
-        query = query.where("timestamp", "<=", endDate.toISOString());
-      }
-
-      const orders = await query.select("*");
-
-      res.json(
-        orders.map((o) => ({
-          ...o,
-          items: typeof o.items === "string" ? JSON.parse(o.items) : o.items,
-          total: parseFloat(o.total),
-        })),
-      );
-    } catch (e) {
-      console.error("Erro ao buscar histórico de pedidos:", e);
-      res.status(500).json({ error: "Erro ao buscar histórico de pedidos" });
-    }
-  },
-);
-import express from "express";
-import fs from "fs/promises";
-import path from "path";
-import cors from "cors";
-import OpenAI from "openai";
-import knex from "knex";
-import jwt from "jsonwebtoken";
-import { createClient } from "redis";
-import paymentRoutes from "./routes/payment.js";
-import * as paymentService from "./services/paymentService.js";
-
-const app = express();
-const PORT = process.env.PORT || 3001;
-
-// --- Configurações ---
-const openai = process.env.OPENAI_API_KEY
-  ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
-  : null;
-
-const MP_ACCESS_TOKEN = process.env.MP_ACCESS_TOKEN;
-const MP_DEVICE_ID = process.env.MP_DEVICE_ID;
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
-const KITCHEN_PASSWORD = process.env.KITCHEN_PASSWORD;
-const SUPER_ADMIN_PASSWORD = process.env.SUPER_ADMIN_PASSWORD;
-const JWT_SECRET = process.env.JWT_SECRET;
-const REDIS_URL = process.env.REDIS_URL;
-
-// --- Banco de Dados ---
-const dbConfig = process.env.DATABASE_URL
-  ? {
-      client: "pg",
-      connection: {
-        connectionString: process.env.DATABASE_URL,
-        ssl: { rejectUnauthorized: false },
-      },
-    }
-  : {
-      client: "sqlite3",
-      connection: {
-        filename: path.join(process.cwd(), "data", "kiosk.sqlite"),
-      },
-      useNullAsDefault: true,
-    };
-
-const db = knex(dbConfig);
-
-const parseJSON = (data) => {
-  if (typeof data === "string") {
-    try {
-      return JSON.parse(data);
-    } catch (e) {
-      return [];
-    }
-  }
-  return data || [];
-};
-
 const dbType = process.env.DATABASE_URL
   ? "PostgreSQL (Render)"
   : "SQLite (Local)";
@@ -1867,7 +1686,7 @@ app.post("/api/notifications/mercadopago", async (req, res) => {
                     .where({ id: item.id })
                     .update({ stock_reserved: newReserved });
                   console.log(
-                    `↩️ Estoque liberado: ${item.name} (${product.stock_reserved} -> ${newReserved})`,
+                    `  ↩️ Estoque liberado: ${item.name} (${product.stock_reserved} → ${newReserved})`,
                   );
                 }
               }
@@ -1983,7 +1802,7 @@ app.post("/api/notifications/mercadopago", async (req, res) => {
                         .where({ id: item.id })
                         .update({ stock_reserved: newReserved });
                       console.log(
-                        `↩️ Estoque liberado: ${item.name} (${product.stock_reserved} -> ${newReserved})`,
+                        `↩️ Estoque liberado: ${item.name} (${product.stock_reserved} → ${newReserved})`,
                       );
                     }
                   }
@@ -2100,7 +1919,9 @@ app.post("/api/notifications/mercadopago", async (req, res) => {
                   await db("products")
                     .where({ id: item.id })
                     .update({ stock_reserved: newReserved });
-                  console.log(`↩️ Estoque liberado: ${item.name}`);
+                  console.log(
+                    `↩️ Estoque liberado: ${item.name} (${product.stock_reserved} → ${newReserved})`,
+                  );
                 }
               }
 
@@ -2911,7 +2732,7 @@ app.get("/api/payment/status/:paymentId", async (req, res) => {
                     .where({ id: item.id })
                     .update({ stock_reserved: newReserved });
                   console.log(
-                    `    ↩️ Estoque liberado para ${item.name}: ${product.stock_reserved} -> ${newReserved}`,
+                    `    ↩️ Estoque liberado para ${item.name}: ${product.stock_reserved} → ${newReserved}`,
                   );
                 }
               }
@@ -4213,6 +4034,7 @@ app.get("/api/super-admin/store/:storeId/top-products", async (req, res) => {
         productSales[item.id].sold += item.quantity || 1;
         productSales[item.id].revenue +=
           (item.price || 0) * (item.quantity || 1);
+        productSales[item.id].orderCount += 1;
       });
     });
 
