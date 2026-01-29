@@ -3038,14 +3038,7 @@ app.post("/api/point/configure", async (req, res) => {
 
   // Busca credenciais da loja
   let MP_ACCESS_TOKEN_LOCAL, MP_DEVICE_ID_LOCAL;
-  if (storeId) {
-    // Loja única: não busca mais na tabela stores
-    if (store) {
-      MP_ACCESS_TOKEN_LOCAL = store.mp_access_token;
-      MP_DEVICE_ID_LOCAL = store.mp_device_id;
-      console.log(`✅ [CONFIGURE] Usando credenciais da loja ${storeId}`);
-    }
-  }
+  // Loja única: não busca mais na tabela stores
 
   // Fallback para credenciais globais
   if (!MP_ACCESS_TOKEN_LOCAL) {
