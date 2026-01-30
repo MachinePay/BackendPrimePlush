@@ -1074,7 +1074,7 @@ app.post("/api/orders", async (req, res) => {
     userId,
     observation: observation || null,
     userName: userName || "Cliente",
-    items: JSON.stringify(items || []),
+    items: Array.isArray(items) ? JSON.stringify(items) : JSON.stringify([]),
     total: total || 0,
     timestamp: new Date().toISOString(),
     status: paymentId ? "active" : "pending_payment",
