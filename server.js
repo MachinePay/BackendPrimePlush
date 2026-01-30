@@ -1067,36 +1067,28 @@ app.post("/api/orders", async (req, res) => {
   const newOrder = {
     id: `order_${Date.now()}`,
     userId,
-    observation: observation || null, // Salva a observação ou null se não houver
+    observation: observation || null,
     userName: userName || "Cliente",
     items: JSON.stringify(items || []),
     total: total || 0,
     timestamp: new Date().toISOString(),
-    // 🔒 IMPORTANTE: Pedido só vai para cozinha (active) após pagamento confirmado
     status: paymentId ? "active" : "pending_payment",
     paymentStatus: paymentId ? "paid" : "pending",
     paymentId: paymentId || null,
-    store_id: req.storeId, // MULTI-TENANCY: Associa pedido à loja
   };
 
-  console.log(
-    `📦 Criando pedido ${newOrder.id} para loja: ${newOrder.store_id}`,
-  );
+  console.log(`📦 Criando pedido ${newOrder.id}`);
 
   try {
-    // Garante que o usuário existe (para convidados) NA LOJA ESPECÍFICA
-    const userExists = await db("users")
-      .where({ id: userId, store_id: req.storeId })
-      .first();
+    // Garante que o usuário existe (para convidados)
+    const userExists = await db("users").where({ id: userId }).first();
 
     if (!userExists) {
-      console.log(`👤 Criando usuário ${userId} na loja ${req.storeId}`);
       await db("users").insert({
         id: userId,
         name: userName || "Convidado",
         email: null,
         cpf: null,
-        store_id: req.storeId, // 🏪 Associa à loja
         historico: "[]",
         pontos: 0,
       });
@@ -1106,15 +1098,11 @@ app.post("/api/orders", async (req, res) => {
     console.log(`🔒 Reservando estoque de ${items.length} produto(s)...`);
 
     for (const item of items) {
-      // MULTI-TENANCY: Busca produto apenas da loja específica
-      const product = await db("products")
-        .where({ id: item.id, store_id: req.storeId })
-        .first();
+      // Busca produto pelo id (single-tenant)
+      const product = await db("products").where({ id: item.id }).first();
 
       if (!product) {
-        console.warn(
-          `⚠️ Produto ${item.id} não encontrado no estoque da loja ${req.storeId}`,
-        );
+        console.warn(`⚠️ Produto ${item.id} não encontrado no estoque!`);
         continue;
       }
 
