@@ -865,12 +865,12 @@ app.post("/api/users/check-cpf", async (req, res) => {
 
 // ========== PASSO 2: Cadastrar novo usuário (APENAS se não existir) ==========
 app.post("/api/users/register", async (req, res) => {
-  const { cpf, name, email, cep, address, phone } = req.body;
+  const { cpf, name, email, cep, address, phone, password } = req.body;
   const storeId = req.storeId; // 🏪 MULTI-TENANT
 
   console.log(`📝 [REGISTER] Loja: ${storeId}, Nome: ${name}, CPF: ${cpf}`);
 
-  if (!cpf || !name || !email || !cep || !address || !phone) {
+  if (!cpf || !name || !email || !cep || !address || !phone || !password) {
     return res.status(400).json({ error: "Todos os campos são obrigatórios" });
   }
 
@@ -903,6 +903,7 @@ app.post("/api/users/register", async (req, res) => {
     );
 
     const newUser = {
+      password: password,
       id: `user_${Date.now()}`,
       name: name.trim(),
       email: email.trim(),
