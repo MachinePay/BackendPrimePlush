@@ -1,3 +1,49 @@
+// Endpoint para valores a receber do Super Admin
+app.get("/api/super-admin/receivables", async (req, res) => {
+  try {
+    const superAdminPassword = req.headers["x-super-admin-password"];
+    if (!SUPER_ADMIN_PASSWORD) {
+      return res.status(503).json({
+        error:
+          "Super Admin não configurado. Defina SUPER_ADMIN_PASSWORD no servidor.",
+      });
+    }
+    if (superAdminPassword !== SUPER_ADMIN_PASSWORD) {
+      return res.status(401).json({
+        error: "Acesso negado. Senha de Super Admin inválida.",
+      });
+    }
+
+    // Total de pedidos pagos
+    const paidOrders = await db("orders")
+      .whereIn("paymentStatus", ["paid", "authorized"])
+      .count("id as count")
+      .first();
+    // Valor total recebido
+    const totalReceived = await db("orders")
+      .whereIn("paymentStatus", ["paid", "authorized"])
+      .sum("total as total")
+      .first();
+    // Data do último recebimento
+    const lastReceived = await db("orders")
+      .whereIn("paymentStatus", ["paid", "authorized"])
+      .max("timestamp as last")
+      .first();
+
+    res.json({
+      success: true,
+      total_paid_orders: Number(paidOrders.count) || 0,
+      total_received: parseFloat(totalReceived.total) || 0,
+      last_received_at: lastReceived.last || null,
+    });
+  } catch (error) {
+    console.error("❌ Erro no endpoint receivables:", error);
+    res.status(500).json({
+      error: "Erro ao buscar valores a receber",
+      message: error.message,
+    });
+  }
+});
 import express from "express";
 import fs from "fs/promises";
 import path from "path";
