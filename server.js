@@ -1390,34 +1390,9 @@ app.delete(
 );
 
 app.get("/api/user-orders", async (req, res) => {
-  console.log(`🔍 [GET /api/user-orders] INÍCIO - Headers:`, {
-    "x-store-id": req.headers["x-store-id"],
-    "storeId-query": req.query.storeId,
-    "req.storeId": req.storeId,
-  });
-
   try {
     const { userId } = req.query;
-    const storeId = req.storeId;
-
-    console.log(
-      `📋 [GET /api/user-orders] userId: ${userId}, storeId: ${storeId}`,
-    );
-
-    if (!storeId) {
-      console.log(`❌ [GET /api/user-orders] storeId ausente!`);
-      console.log(`❌ Headers recebidos:`, req.headers);
-      return res.status(400).json({
-        error: "Store ID obrigatório. Envie via header 'x-store-id'",
-        debug: {
-          receivedHeaders: Object.keys(req.headers),
-          path: req.path,
-          method: req.method,
-        },
-      });
-    }
-
-    // Filtra por loja E por usuário (se fornecido)
+    console.log(`📋 [GET /api/user-orders] userId: ${userId}`);
     let query = db("orders")
       .where({ store_id: storeId })
       .orderBy("timestamp", "desc");
@@ -3519,24 +3494,14 @@ app.get("/api/ai/inventory-analysis", async (req, res) => {
       `🤖 Iniciando análise inteligente de estoque da loja ${storeId}...`,
     );
 
-    // 1. Buscar produtos da loja específica
-    const products = await db("products")
-      .where({ store_id: storeId })
-      .select("*")
-      .orderBy("category");
+    // 1. Buscar todos os produtos
+    const products = await db("products").select("*").orderBy("category");
 
-    // 2. Buscar HISTÓRICO COMPLETO de pedidos PAGOS da loja (todas as datas)
-    console.log(
-      `📊 Buscando histórico completo de vendas da loja ${storeId}...`,
-    );
-
+    // 2. Buscar histórico completo de pedidos pagos
     const orders = await db("orders")
-      .where({ store_id: storeId })
-      .whereIn("paymentStatus", ["paid", "approved"]) // Apenas pedidos pagos
+      .whereIn("paymentStatus", ["paid", "approved"])
       .select("*")
       .orderBy("timestamp", "desc");
-
-    console.log(`📈 Total de pedidos pagos encontrados: ${orders.length}`);
 
     // Calcular período de análise
     const oldestOrder =
@@ -3606,26 +3571,8 @@ app.get("/api/ai/inventory-analysis", async (req, res) => {
       })),
     };
 
-    // Busca informações da loja para personalizar análise
-    // Loja única: não busca mais na tabela stores
-    const storeName = store?.name || storeId;
-
-    // Determina tipo de negócio
-    let businessType = "estabelecimento de food service";
-    if (
-      storeId.includes("sushi") ||
-      storeName.toLowerCase().includes("sushi")
-    ) {
-      businessType = "restaurante japonês";
-    } else if (
-      storeId.includes("pastel") ||
-      storeName.toLowerCase().includes("pastel")
-    ) {
-      businessType = "pastelaria";
-    }
-
-    // 5. Prompt estruturado para a IA
-    const prompt = `Você é um consultor de negócios especializado em food service. Analise os dados HISTÓRICOS COMPLETOS de vendas de ${businessType} (${storeName}):
+    // Prompt estruturado para a IA
+    const prompt = `Você é um consultor de negócios especializado em food service. Analise os dados HISTÓRICOS COMPLETOS de vendas:
 
 📊 RESUMO FINANCEIRO:
 - Período analisado: ${analysisData.period}
@@ -3636,7 +3583,7 @@ app.get("/api/ai/inventory-analysis", async (req, res) => {
 
 📦 DESEMPENHO POR PRODUTO:
 ${analysisData.products
-  .sort((a, b) => parseFloat(b.revenue) - parseFloat(a.revenue)) // Ordena por receita
+  .sort((a, b) => parseFloat(b.revenue) - parseFloat(a.revenue))
   .map(
     (p) =>
       `• ${p.name} (${p.category}):
@@ -3668,13 +3615,6 @@ Seja específico, use dados concretos e foque em AÇÕES PRÁTICAS que o admin p
 
 Seja direto, prático e use emojis. Priorize ações que o administrador pode tomar HOJE.`;
 
-    console.log(`📤 Enviando dados para análise da IA...`);
-    console.log(
-      `📊 Dados enviados: ${
-        orders.length
-      } pedidos pagos, R$ ${totalRevenue.toFixed(2)} em receita total`,
-    );
-
     // 6. Chamar OpenAI
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
@@ -3691,9 +3631,6 @@ Seja direto, prático e use emojis. Priorize ações que o administrador pode to
     });
 
     const analysis = completion.choices[0].message.content;
-
-    console.log("✅ Análise de histórico completo concluída!");
-    console.log(`📊 Período analisado: ${analysisperiod}`);
 
     // 7. Retornar análise + dados brutos
     res.json({
