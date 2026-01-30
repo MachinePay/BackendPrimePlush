@@ -1,4 +1,18 @@
-// Endpoint para valores a receber do Super Admin
+import express from "express";
+import fs from "fs/promises";
+import path from "path";
+import cors from "cors";
+import OpenAI from "openai";
+import knex from "knex";
+import jwt from "jsonwebtoken";
+import { createClient } from "redis";
+import paymentRoutes from "./routes/payment.js";
+import * as paymentService from "./services/paymentService.js";
+
+const app = express();
+const PORT = process.env.PORT || 3001;
+
+// Endpoint para valores a receber do Super Admin (após inicialização do app)
 app.get("/api/super-admin/receivables", async (req, res) => {
   try {
     const superAdminPassword = req.headers["x-super-admin-password"];
@@ -44,19 +58,6 @@ app.get("/api/super-admin/receivables", async (req, res) => {
     });
   }
 });
-import express from "express";
-import fs from "fs/promises";
-import path from "path";
-import cors from "cors";
-import OpenAI from "openai";
-import knex from "knex";
-import jwt from "jsonwebtoken";
-import { createClient } from "redis";
-import paymentRoutes from "./routes/payment.js";
-import * as paymentService from "./services/paymentService.js";
-
-const app = express();
-const PORT = process.env.PORT || 3001;
 
 // --- Configurações ---
 const openai = process.env.OPENAI_API_KEY
