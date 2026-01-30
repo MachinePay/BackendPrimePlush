@@ -12,6 +12,14 @@ import * as paymentService from "./services/paymentService.js";
 const app = express();
 const PORT = process.env.PORT || 3001;
 
+// Configuração CORS para permitir frontend local e produção
+app.use(
+  cors({
+    origin: ["http://localhost:3000", "https://primeplush.vercel.app"],
+    credentials: true,
+  }),
+);
+
 // Endpoint para valores a receber do Super Admin (após inicialização do app)
 app.get("/api/super-admin/receivables", async (req, res) => {
   try {
