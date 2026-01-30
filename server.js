@@ -284,7 +284,6 @@ async function initDatabase() {
     await db.schema.createTable("categories", (table) => {
       table.string("id").primary();
       table.string("name").notNullable();
-      table.string("store_id").notNullable().index();
       table.string("icon").defaultTo("📦"); // Emoji da categoria
       table.integer("order").defaultTo(0); // Ordem de exibição
       table.timestamp("created_at").defaultTo(db.fn.now());
@@ -294,137 +293,7 @@ async function initDatabase() {
 
   // Modo single-tenant: não cria tabela de lojas nem colunas de store_id
   // Configure as credenciais Mercado Pago no .env
-  try {
-    await db.raw(
-      "ALTER TABLE products ADD COLUMN IF NOT EXISTS store_id VARCHAR(255)",
-    );
-    console.log("✅ [MULTI-TENANCY] Coluna store_id em products (SQL bruto)");
-  } catch (err) {
-    console.log(
-      "ℹ️ [MULTI-TENANCY] Coluna store_id já existe em products:",
-      err.message,
-    );
-  }
-
-  try {
-    await db.raw(
-      "CREATE INDEX IF NOT EXISTS products_store_id_index ON products(store_id)",
-    );
-    console.log("✅ [MULTI-TENANCY] Índice criado em products.store_id");
-  } catch (err) {
-    console.log("ℹ️ [MULTI-TENANCY] Índice já existe:", err.message);
-  }
-
-  try {
-    await db.raw(
-      "ALTER TABLE orders ADD COLUMN IF NOT EXISTS store_id VARCHAR(255)",
-    );
-    console.log("✅ [MULTI-TENANCY] Coluna store_id em orders (SQL bruto)");
-  } catch (err) {
-    console.log(
-      "ℹ️ [MULTI-TENANCY] Coluna store_id já existe em orders:",
-      err.message,
-    );
-  }
-
-  try {
-    await db.raw(
-      "CREATE INDEX IF NOT EXISTS orders_store_id_index ON orders(store_id)",
-    );
-    console.log("✅ [MULTI-TENANCY] Índice criado em orders.store_id");
-  } catch (err) {
-    console.log("ℹ️ [MULTI-TENANCY] Índice já existe:", err.message);
-  }
-
-  // Adiciona store_id em users
-  try {
-    await db.raw(
-      "ALTER TABLE users ADD COLUMN IF NOT EXISTS store_id VARCHAR(255)",
-    );
-    console.log("✅ [MULTI-TENANCY] Coluna store_id em users (SQL bruto)");
-  } catch (err) {
-    console.log(
-      "ℹ️ [MULTI-TENANCY] Coluna store_id já existe em users:",
-      err.message,
-    );
-  }
-
-  try {
-    await db.raw(
-      "CREATE INDEX IF NOT EXISTS users_store_id_index ON users(store_id)",
-    );
-    console.log("✅ [MULTI-TENANCY] Índice criado em users.store_id");
-  } catch (err) {
-    console.log("ℹ️ [MULTI-TENANCY] Índice já existe:", err.message);
-  }
-
-  // Remove constraint UNIQUE do CPF (permitir mesmo CPF em lojas diferentes)
-  try {
-    await db.raw(
-      "ALTER TABLE users DROP CONSTRAINT IF EXISTS users_cpf_unique",
-    );
-    console.log("✅ [MULTI-TENANCY] Constraint UNIQUE removido de users.cpf");
-  } catch (err) {
-    console.log("ℹ️ [MULTI-TENANCY]", err.message);
-  }
-
-  // Cria índice composto único (cpf + store_id)
-  try {
-    await db.raw(
-      "CREATE UNIQUE INDEX IF NOT EXISTS users_cpf_store_unique ON users(cpf, store_id)",
-    );
-    console.log(
-      "✅ [MULTI-TENANCY] Índice único criado em users(cpf, store_id)",
-    );
-  } catch (err) {
-    console.log("ℹ️ [MULTI-TENANCY] Índice já existe:", err.message);
-  }
-
-  // ========== MIGRAÇÃO: Atribui store_id padrão para produtos/pedidos existentes ==========
-  const productsWithoutStore = await db("products")
-    .whereNull("store_id")
-    .count("id as count")
-    .first();
-
-  if (Number(productsWithoutStore.count) > 0) {
-    console.log(
-      `🔄 [MIGRAÇÃO] Encontrados ${productsWithoutStore.count} produtos sem store_id`,
-    );
-    await db("products").whereNull("store_id").update({ store_id: "pastel1" }); // Loja padrão
-    console.log(
-      `✅ [MIGRAÇÃO] ${productsWithoutStore.count} produtos atribuídos à loja 'pastel1'`,
-    );
-  }
-
-  const ordersWithoutStore = await db("orders")
-    .whereNull("store_id")
-    .count("id as count")
-    .first();
-
-  if (Number(ordersWithoutStore.count) > 0) {
-    console.log(
-      `🔄 [MIGRAÇÃO] Encontrados ${ordersWithoutStore.count} pedidos sem store_id`,
-    );
-    await db("orders").whereNull("store_id").update({ store_id: "pastel1" }); // Loja padrão
-    console.log(
-      `✅ [MIGRAÇÃO] ${ordersWithoutStore.count} pedidos atribuídos à loja 'pastel1'`,
-    );
-  }
-
-  const usersWithoutStore = await db("users")
-    .whereNull("store_id")
-    .count("id as count")
-    .first();
-
-  if (Number(usersWithoutStore.count) > 0) {
-    console.log(
-      `🔄 [MIGRAÇÃO] Encontrados ${usersWithoutStore.count} usuários sem store_id`,
-    );
-    await db("users").whereNull("store_id").update({ store_id: "pastel1" }); // Loja padrão
-    console.log(
-      `✅ [MIGRAÇÃO] ${usersWithoutStore.count} usuários atribuídos à loja 'pastel1'`,
-    );
-  }
+  // ...existing code...
 
   const result = await db("products").count("id as count").first();
   if (Number(result.count) === 0) {
@@ -1160,16 +1029,8 @@ app.get(
         .orderBy("timestamp", "asc");
 
       // Filtra por loja (obrigatório)
-      query = query.where({ store_id: storeId });
-      console.log(`🍳 Cozinha: Filtrando pedidos da loja ${storeId}`);
-
       const orders = await query;
-
-      console.log(
-        `🍳 Cozinha ${storeId || "todas"}: ${
-          orders.length
-        } pedido(s) PAGOS na fila`,
-      );
+      console.log(`🍳 Cozinha: ${orders.length} pedido(s) PAGOS na fila`);
 
       // Log detalhado dos pedidos retornados
       if (orders.length > 0) {
