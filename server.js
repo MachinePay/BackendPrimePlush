@@ -833,9 +833,7 @@ app.post("/api/users/check-cpf", async (req, res) => {
 
   try {
     // Busca usuário APENAS na loja específica
-    const user = await db("users")
-      .where({ cpf: cpfClean, store_id: storeId })
-      .first();
+    const user = await db("users").where({ cpf: cpfClean }).first();
 
     if (user) {
       console.log(
@@ -867,13 +865,13 @@ app.post("/api/users/check-cpf", async (req, res) => {
 
 // ========== PASSO 2: Cadastrar novo usuário (APENAS se não existir) ==========
 app.post("/api/users/register", async (req, res) => {
-  const { cpf, name } = req.body;
+  const { cpf, name, email, cep, address, phone } = req.body;
   const storeId = req.storeId; // 🏪 MULTI-TENANT
 
   console.log(`📝 [REGISTER] Loja: ${storeId}, Nome: ${name}, CPF: ${cpf}`);
 
-  if (!cpf || !name) {
-    return res.status(400).json({ error: "CPF e nome são obrigatórios" });
+  if (!cpf || !name || !email || !cep || !address || !phone) {
+    return res.status(400).json({ error: "Todos os campos são obrigatórios" });
   }
 
   const cpfClean = String(cpf).replace(/\D/g, "");
@@ -884,9 +882,7 @@ app.post("/api/users/register", async (req, res) => {
 
   try {
     // Verifica se já existe NA LOJA ESPECÍFICA (segurança extra)
-    const exists = await db("users")
-      .where({ cpf: cpfClean, store_id: storeId })
-      .first();
+    const exists = await db("users").where({ cpf: cpfClean }).first();
 
     if (exists) {
       console.log(
@@ -909,9 +905,11 @@ app.post("/api/users/register", async (req, res) => {
     const newUser = {
       id: `user_${Date.now()}`,
       name: name.trim(),
-      email: null,
+      email: email.trim(),
       cpf: cpfClean,
-      store_id: storeId, // 🏪 Associa à loja
+      cep: cep.trim(),
+      address: address.trim(),
+      phone: phone.trim(),
       historico: JSON.stringify([]),
       pontos: 0,
     };
