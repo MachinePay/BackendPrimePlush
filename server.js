@@ -303,6 +303,30 @@ async function initDatabase() {
   // Modo single-tenant: não cria tabela de lojas nem colunas de store_id
   // Configure as credenciais Mercado Pago no .env
   // ...existing code...
+  // ========== LOGIN POR CPF E SENHA ===========
+  app.post("/api/users/login", async (req, res) => {
+    const { cpf, password } = req.body;
+    if (!cpf || !password) {
+      return res.status(400).json({ error: "CPF e senha obrigatórios" });
+    }
+    const cpfClean = String(cpf).replace(/\D/g, "");
+    try {
+      const user = await db("users").where({ cpf: cpfClean }).first();
+      if (!user) {
+        return res.status(404).json({ error: "Usuário não encontrado" });
+      }
+      if (user.password !== password) {
+        return res.status(401).json({ error: "Senha incorreta" });
+      }
+      res.json({
+        success: true,
+        user: { ...user, historico: parseJSON(user.historico) },
+      });
+    } catch (e) {
+      console.error("❌ Erro ao autenticar usuário:", e);
+      res.status(500).json({ error: "Erro ao autenticar usuário" });
+    }
+  });
 
   const result = await db("products").count("id as count").first();
   if (Number(result.count) === 0) {
