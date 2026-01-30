@@ -559,7 +559,6 @@ app.post(
         popular: popular || false,
         stock: stock !== undefined ? parseInt(stock) : null, // null = ilimitado
         minStock: minStock !== undefined ? parseInt(minStock) : 0,
-        store_id: req.storeId, // MULTI-TENANCY: Associa produto à loja
       };
 
       await db("products").insert(newProduct);
@@ -593,9 +592,7 @@ app.put(
 
     try {
       // MULTI-TENANCY: Busca produto apenas da loja específica
-      const exists = await db("products")
-        .where({ id, store_id: req.storeId })
-        .first();
+      const exists = await db("products").where({ id }).first();
       if (!exists) {
         return res
           .status(404)
@@ -614,11 +611,9 @@ app.put(
       if (minStock !== undefined) updates.minStock = parseInt(minStock);
 
       // MULTI-TENANCY: Atualiza apenas se pertencer à loja
-      await db("products").where({ id, store_id: req.storeId }).update(updates);
+      await db("products").where({ id }).update(updates);
 
-      const updated = await db("products")
-        .where({ id, store_id: req.storeId })
-        .first();
+      const updated = await db("products").where({ id }).first();
       res.json({
         ...updated,
         price: parseFloat(updated.price),
@@ -640,9 +635,7 @@ app.delete(
 
     try {
       // MULTI-TENANCY: Busca produto apenas da loja específica
-      const exists = await db("products")
-        .where({ id, store_id: req.storeId })
-        .first();
+      const exists = await db("products").where({ id }).first();
       if (!exists) {
         return res
           .status(404)
@@ -650,7 +643,7 @@ app.delete(
       }
 
       // MULTI-TENANCY: Deleta apenas se pertencer à loja
-      await db("products").where({ id, store_id: req.storeId }).del();
+      await db("products").where({ id }).del();
       res.json({ success: true, message: "Produto deletado com sucesso" });
     } catch (e) {
       console.error("Erro ao deletar produto:", e);
