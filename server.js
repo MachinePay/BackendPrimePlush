@@ -3006,56 +3006,22 @@ app.post("/api/payment/clear-queue", async (req, res) => {
 // --- Rotas de IA ---
 
 app.post("/api/ai/suggestion", async (req, res) => {
-  console.log(
-    `🔍 [IA SUGGESTION] Headers recebidos:`,
-    req.headers["x-store-id"],
-  );
-  console.log(`🔍 [IA SUGGESTION] storeId do middleware:`, req.storeId);
-
   if (!openai) {
-    console.log(
-      "❌ OpenAI não inicializada - OPENAI_API_KEY está configurada?",
-    );
     return res.json({ text: "IA indisponível" });
   }
   try {
-    const storeId = req.storeId; // 🏪 MULTI-TENANT
-
-    if (!storeId) {
-      console.log("⚠️ [IA SUGGESTION] storeId ausente!");
-      return res.json({ text: "Erro: loja não identificada" });
-    }
-
-    console.log(`🤖 [IA SUGGESTION] Loja: ${storeId}`);
-
-    // Busca informações da loja
-    // Loja única: não busca mais na tabela stores
-    const storeName = store?.name || storeId;
-
-    console.log(`🏪 [IA SUGGESTION] Store encontrada:`, storeName);
-
-    // Busca produtos APENAS da loja específica
-    const products = await db("products")
-      .where({ store_id: storeId })
-      .select("id", "name", "description", "price", "category", "stock");
-
-    console.log(
-      `🔍 [IA SUGGESTION] Query executada: products WHERE store_id = '${storeId}'`,
+    // Busca todos os produtos disponíveis
+    const products = await db("products").select(
+      "id",
+      "name",
+      "description",
+      "price",
+      "category",
+      "stock",
     );
-    console.log(
-      `🔍 [IA SUGGESTION] Total de produtos encontrados:`,
-      products.length,
-    );
-    console.log(
-      `🔍 [IA SUGGESTION] Produtos:`,
-      products.map((p) => `${p.name} (${p.category})`).join(", "),
-    );
-
     const availableProducts = products.filter(
       (p) => p.stock === null || p.stock > 0,
     );
-
-    // Monta lista formatada dos produtos
     const productList = availableProducts
       .map(
         (p) =>
@@ -3065,44 +3031,11 @@ app.post("/api/ai/suggestion", async (req, res) => {
       )
       .join("\n");
 
-    console.log(
-      `📋 ${availableProducts.length} produtos disponíveis na loja ${storeName}`,
-    );
-
-    // Determina o tipo de estabelecimento baseado no storeId ou nome
-    let storeType = "loja de pelúcias";
-    let storeContext =
-      "Você é um vendedor PrimePlush, especialista em pelúcias.";
-
-    if (
-      storeId.includes("sushi") ||
-      storeName.toLowerCase().includes("sushi")
-    ) {
-      storeType = "restaurante japonês";
-      storeContext =
-        "Você é um atendente especializado em culinária japonesa. Conheça bem sushi, sashimi, temaki, yakisoba e outros pratos orientais";
-    } else if (
-      storeId.includes("primeplush") ||
-      storeName.toLowerCase().includes("primeplush")
-    ) {
-      storeType = "loja de pelúcias";
-      storeContext =
-        "Você é um vendedor especializado em pelúcias e brinquedos PrimePlush. Conheça bem os modelos, tamanhos e novidades.";
-    }
-
-    console.log(`🤖 [IA SUGGESTION] Tipo de loja detectado: ${storeType}`);
-    console.log(`🤖 [IA SUGGESTION] Catálogo enviado para IA:\n${productList}`);
-
-    const completion = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [
-        {
-          role: "system",
-          content: `Você é ${storeContext} da ${storeName}.
+    const systemPrompt = `Você é um vendedor especializado em pelúcias e brinquedos PrimePlush. Conheça bem os modelos, tamanhos e novidades.
 
 🎯 SUA MISSÃO: Recomendar produtos DO NOSSO CATÁLOGO REAL para o cliente.
 
-📋 PRODUTOS QUE TEMOS DISPONÍVEIS AGORA (${storeType}):
+📋 PRODUTOS QUE TEMOS DISPONÍVEIS AGORA:
 ${productList}
 
 ⚠️ REGRAS ABSOLUTAS:
@@ -3122,7 +3055,14 @@ Resposta: "Recomendo nosso Suco de Melancia, super refrescante! 🍉"
 ❌ NUNCA FAÇA ISSO:
 - "Desculpe, não temos coca-cola" (SEM sugerir alternativa)
 - Mencionar produtos que NÃO estão na lista acima
-- Recomendar "Temaki" se não estiver listado`,
+- Recomendar "Temaki" se não estiver listado`;
+
+    const completion = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [
+        {
+          role: "system",
+          content: systemPrompt,
         },
         { role: "user", content: req.body.prompt },
       ],
@@ -3130,13 +3070,8 @@ Resposta: "Recomendo nosso Suco de Melancia, super refrescante! 🍉"
     });
 
     const aiResponse = completion.choices[0].message.content;
-    console.log(`✅ Resposta OpenAI recebida para ${storeName}!`);
-    console.log(`🤖 [IA SUGGESTION] Resposta da IA: ${aiResponse}`);
-
     res.json({ text: aiResponse });
   } catch (e) {
-    console.error("❌ ERRO OpenAI:", e.message);
-    console.error("Detalhes:", e.response?.data || e);
     res.json({ text: "Sugestão indisponível no momento." });
   }
 });
