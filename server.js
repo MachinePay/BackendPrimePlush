@@ -179,11 +179,20 @@ async function initDatabase() {
       table.decimal("priceRaw", 8, 2).notNullable().defaultTo(0); // Preço bruto
       table.string("category").notNullable();
       table.string("videoUrl");
+      table.string("imageUrl"); // URL da imagem do produto
       table.boolean("popular").defaultTo(false);
       table.integer("stock"); // NULL = estoque ilimitado, 0 = esgotado
       table.integer("stock_reserved").defaultTo(0); // Estoque reservado temporariamente
       table.integer("minStock").defaultTo(0); // Estoque mínimo
     });
+    // Adiciona coluna imageUrl se não existir
+    const hasImageUrl = await db.schema.hasColumn("products", "imageUrl");
+    if (!hasImageUrl) {
+      await db.schema.table("products", (table) => {
+        table.string("imageUrl");
+      });
+      console.log("✅ Coluna imageUrl adicionada");
+    }
   } else {
     // Remover coluna description se existir
     const hasDescription = await db.schema.hasColumn("products", "description");
@@ -585,6 +594,7 @@ app.put(
       price,
       priceRaw,
       category,
+      imageUrl,
       videoUrl,
       popular,
       stock,
@@ -605,6 +615,7 @@ app.put(
       if (price !== undefined) updates.price = parseFloat(price);
       if (priceRaw !== undefined) updates.priceRaw = parseFloat(priceRaw);
       if (category !== undefined) updates.category = category;
+      if (imageUrl !== undefined) updates.imageUrl = imageUrl;
       if (videoUrl !== undefined) updates.videoUrl = videoUrl;
       if (popular !== undefined) updates.popular = popular;
       if (stock !== undefined)

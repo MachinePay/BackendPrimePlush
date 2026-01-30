@@ -6,6 +6,7 @@
     "price": 8.5,
     "category": "Pastel",
     "videoUrl": "https://res.cloudinary.com/dol86yfg6/video/upload/v1764178446/PastelDeCarne_vf8pez.mp4",
+    "imageUrl": "https://images.unsplash.com/photo-1504674900247-0877df9cc836?fit=crop&w=400&q=80",
     "popular": true
   },
   {
@@ -15,6 +16,7 @@
     "price": 8.0,
     "category": "Pastel",
     "videoUrl": "https://res.cloudinary.com/dol86yfg6/video/upload/v1764178444/PastelDeQueijo_j5rp2d.mp4",
+    "imageUrl": "https://images.unsplash.com/photo-1519864600265-abb23847ef2c?fit=crop&w=400&q=80",
     "popular": true
   },
   {
@@ -24,6 +26,7 @@
     "price": 8.5,
     "category": "Pastel",
     "videoUrl": "https://res.cloudinary.com/dol86yfg6/video/upload/v1764178443/PastelDeFrangoComCatupiry_c08kfg.mp4",
+    "imageUrl": "https://images.unsplash.com/photo-1464306076886-debca5e8a6b0?fit=crop&w=400&q=80",
     "popular": false
   },
   {
@@ -33,6 +36,7 @@
     "price": 5.0,
     "category": "Bebida",
     "videoUrl": "https://res.cloudinary.com/dol86yfg6/video/upload/v1764178443/CocaLata_ocgaxa.mp4",
+    "imageUrl": "https://images.unsplash.com/photo-1502741338009-cac2772e18bc?fit=crop&w=400&q=80",
     "popular": true
   },
   {
@@ -42,6 +46,7 @@
     "price": 7.0,
     "category": "Bebida",
     "videoUrl": "https://res.cloudinary.com/dol86yfg6/video/upload/v1764178443/SucoDeLaranja_xdgjqv.mp4",
+    "imageUrl": "https://images.unsplash.com/photo-1504674900247-0877df9cc836?fit=crop&w=400&q=80",
     "popular": false
   },
   {
@@ -51,6 +56,7 @@
     "price": 10.0,
     "category": "Doce",
     "videoUrl": "https://res.cloudinary.com/dol86yfg6/video/upload/v1764178443/PastelDeNutellaComMorango_gha4ao.mp4",
+    "imageUrl": "https://images.unsplash.com/photo-1519864600265-abb23847ef2c?fit=crop&w=400&q=80",
     "popular": true
   }
 ]
