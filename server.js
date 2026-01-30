@@ -464,6 +464,7 @@ app.get("/api/menu", async (req, res) => {
         return {
           ...p,
           price: parseFloat(p.price),
+          priceRaw: p.priceRaw !== undefined ? parseFloat(p.priceRaw) : 0,
           stock: p.stock,
           stock_reserved: p.stock_reserved || 0,
           stock_available: stockAvailable,
