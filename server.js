@@ -355,7 +355,7 @@ async function initDatabase() {
     console.log("✅ Tabela 'categories' criada com sucesso");
   }
 
-  // Modo single-tenant: não cria tabela de lojas nem colunas de store_id
+  // Modo single-tenant: não cria tabela de lojas
   // Configure as credenciais Mercado Pago no .env
   // ...existing code...
   // ========== LOGIN POR CPF E SENHA ===========
@@ -451,7 +451,7 @@ app.get("/health", (req, res) =>
   res.status(200).json({ status: "ok", db: dbType }),
 );
 
-// Endpoint de debug para verificar store_id
+// Endpoint de debug removido: store_id não é mais utilizado
 
 // Rota de teste do webhook (para verificar se está acessível)
 app.get("/api/webhooks/mercadopago", (req, res) => {
@@ -512,7 +512,7 @@ app.post("/api/auth/login", (req, res) => {
   }
 });
 
-// MODO SINGLE-TENANT: Middleware de storeId removido
+// MODO SINGLE-TENANT
 
 // --- Rotas da API (Menu, Usuários, Pedidos) ---
 
@@ -545,11 +545,9 @@ app.get("/api/menu", async (req, res) => {
   } catch (e) {
     console.error(`❌ [GET /api/menu] ERRO ao buscar menu:`, e.message);
     console.error(`❌ [GET /api/menu] Stack:`, e.stack);
-    console.error(`❌ [GET /api/menu] Store ID: ${req.storeId}`);
     res.status(500).json({
       error: "Erro ao buscar menu",
       details: e.message,
-      storeId: req.storeId,
     });
   }
 });
@@ -878,9 +876,7 @@ app.get("/api/users", authenticateToken, authorizeAdmin, async (req, res) => {
 // ========== PASSO 1: Verificar se CPF existe (NÃO cria usuário) ==========
 app.post("/api/users/check-cpf", async (req, res) => {
   const { cpf } = req.body;
-  const storeId = req.storeId; // 🏪 MULTI-TENANT
-
-  console.log(`🔍 [CHECK-CPF] Loja: ${storeId}, CPF: ${cpf}`);
+  console.log(`🔍 [CHECK-CPF] CPF: ${cpf}`);
 
   if (!cpf) {
     return res.status(400).json({ error: "CPF obrigatório" });
@@ -893,13 +889,11 @@ app.post("/api/users/check-cpf", async (req, res) => {
   }
 
   try {
-    // Busca usuário APENAS na loja específica
+    // Busca usuário no sistema (single-tenant)
     const user = await db("users").where({ cpf: cpfClean }).first();
 
     if (user) {
-      console.log(
-        `✅ CPF encontrado na loja ${storeId}: ${user.name} (${cpfClean})`,
-      );
+      console.log(`✅ CPF encontrado: ${user.name} (${cpfClean})`);
       return res.json({
         exists: true,
         requiresRegistration: false,
@@ -910,9 +904,7 @@ app.post("/api/users/check-cpf", async (req, res) => {
       });
     }
 
-    console.log(
-      `📋 CPF não encontrado na loja ${storeId}: ${cpfClean} - necessário cadastro`,
-    );
+    console.log(`📋 CPF não encontrado: ${cpfClean} - necessário cadastro`);
     return res.json({
       exists: false,
       requiresRegistration: true,
@@ -927,9 +919,7 @@ app.post("/api/users/check-cpf", async (req, res) => {
 // ========== PASSO 2: Cadastrar novo usuário (APENAS se não existir) ==========
 app.post("/api/users/register", async (req, res) => {
   const { cpf, name, email, cep, address, phone, password } = req.body;
-  const storeId = req.storeId; // 🏪 MULTI-TENANT
-
-  console.log(`📝 [REGISTER] Loja: ${storeId}, Nome: ${name}, CPF: ${cpf}`);
+  console.log(`📝 [REGISTER] Nome: ${name}, CPF: ${cpf}`);
 
   if (!cpf || !name || !email || !cep || !address || !phone || !password) {
     return res.status(400).json({ error: "Todos os campos são obrigatórios" });
@@ -942,15 +932,13 @@ app.post("/api/users/register", async (req, res) => {
   }
 
   try {
-    // Verifica se já existe NA LOJA ESPECÍFICA (segurança extra)
+    // Verifica se já existe (single-tenant)
     const exists = await db("users").where({ cpf: cpfClean }).first();
 
     if (exists) {
-      console.log(
-        `⚠️ Tentativa de cadastro duplicado na loja ${storeId}: ${cpfClean}`,
-      );
+      console.log(`⚠️ Tentativa de cadastro duplicado: ${cpfClean}`);
       return res.status(409).json({
-        error: "CPF já cadastrado nesta loja",
+        error: "CPF já cadastrado",
         user: {
           ...exists,
           historico: parseJSON(exists.historico),
@@ -958,10 +946,8 @@ app.post("/api/users/register", async (req, res) => {
       });
     }
 
-    // Cria novo usuário NA LOJA ESPECÍFICA
-    console.log(
-      `📝 Cadastrando novo usuário na loja ${storeId}: ${name} (${cpfClean})`,
-    );
+    // Cria novo usuário (single-tenant)
+    console.log(`📝 Cadastrando novo usuário: ${name} (${cpfClean})`);
 
     const newUser = {
       password: password,
@@ -978,9 +964,7 @@ app.post("/api/users/register", async (req, res) => {
 
     await db("users").insert(newUser);
 
-    console.log(
-      `✅ Usuário cadastrado com sucesso na loja ${storeId}: ${newUser.id}`,
-    );
+    console.log(`✅ Usuário cadastrado com sucesso: ${newUser.id}`);
 
     res.status(201).json({
       success: true,
@@ -1035,7 +1019,7 @@ app.post("/api/users", async (req, res) => {
 app.get("/api/debug/orders", async (req, res) => {
   try {
     const allOrders = await db("orders")
-      .select("id", "status", "paymentStatus", "store_id", "timestamp")
+      .select("id", "status", "paymentStatus", "timestamp")
       .orderBy("timestamp", "desc")
       .limit(20);
 
@@ -1043,16 +1027,11 @@ app.get("/api/debug/orders", async (req, res) => {
 
     const summary = {
       total: allOrders.length,
-      porLoja: {},
       porStatus: {},
       pedidos: allOrders,
     };
 
     allOrders.forEach((order) => {
-      // Conta por loja
-      summary.porLoja[order.store_id] =
-        (summary.porLoja[order.store_id] || 0) + 1;
-
       // Conta por status
       const statusKey = `${order.status}/${order.paymentStatus}`;
       summary.porStatus[statusKey] = (summary.porStatus[statusKey] || 0) + 1;
@@ -1070,39 +1049,19 @@ app.get(
   authorizeKitchen,
   async (req, res) => {
     console.log(`🍳 [GET /api/orders] Requisição recebida!`);
-    console.log(`🍳 [GET /api/orders] storeId: ${req.storeId}`);
     console.log(`🍳 [GET /api/orders] user role: ${req.user?.role}`);
 
     try {
-      const storeId = req.storeId;
-
-      if (!storeId) {
-        console.log(`❌ [GET /api/orders] storeId ausente no endpoint!`);
-        return res.status(400).json({
-          error: "Store ID obrigatório. Envie via header 'x-store-id'",
-          debug: {
-            headers: req.headers,
-            path: req.path,
-          },
-        });
-      }
-
-      // 🔒 IMPORTANTE: Só retorna pedidos pagos e ativos (active ou preparing) DA LOJA
-      let query = db("orders")
+      // SINGLE-TENANT: Retorna todos os pedidos pagos e ativos
+      const orders = await db("orders")
         .whereIn("status", ["active", "preparing"])
         .whereIn("paymentStatus", ["paid", "authorized"])
         .orderBy("timestamp", "asc");
 
-      // Filtra por loja (obrigatório)
-      const orders = await query;
       console.log(`🍳 Cozinha: ${orders.length} pedido(s) PAGOS na fila`);
 
-      // Log detalhado dos pedidos retornados
       if (orders.length > 0) {
-        console.log(
-          `📋 IDs dos pedidos:`,
-          orders.map((o) => `${o.id} (store_id: ${o.store_id})`).join(", "),
-        );
+        console.log(`📋 IDs dos pedidos:`, orders.map((o) => o.id).join(", "));
       }
 
       res.json(
@@ -1120,9 +1079,9 @@ app.get(
 
 app.post("/api/orders", async (req, res) => {
   const { userId, userName, items, total, paymentId, observation } = req.body;
-
-  console.log(`📥 [POST /api/orders] storeId recebido: ${req.storeId}`);
-  console.log(`📥 [POST /api/orders] Headers:`, req.headers["x-store-id"]);
+  console.log(
+    `📥 [POST /api/orders] Nova ordem recebida para usuário: ${userId}`,
+  );
 
   const newOrder = {
     id: `order_${Date.now()}`,
@@ -1218,21 +1177,11 @@ app.put("/api/orders/:id", async (req, res) => {
   try {
     console.log(`📝 Atualizando pedido ${id} com payment ${paymentId}...`);
 
-    const storeId = req.storeId;
-
-    let query = db("orders").where({ id });
-
-    // Filtra por loja se storeId estiver presente
-    if (storeId) {
-      query = query.where({ store_id: storeId });
-    }
-
-    const order = await query.first();
+    // SINGLE-TENANT: Busca pedido apenas pelo id
+    const order = await db("orders").where({ id }).first();
 
     if (!order) {
-      return res
-        .status(404)
-        .json({ error: "Pedido não encontrado nesta loja" });
+      return res.status(404).json({ error: "Pedido não encontrado" });
     }
 
     const updates = {};
@@ -1252,14 +1201,7 @@ app.put("/api/orders/:id", async (req, res) => {
       const items = parseJSON(order.items);
 
       for (const item of items) {
-        let productQuery = db("products").where({ id: item.id });
-
-        // Filtra por loja se storeId estiver presente
-        if (storeId) {
-          productQuery = productQuery.where({ store_id: storeId });
-        }
-
-        const product = await productQuery.first();
+        const product = await db("products").where({ id: item.id }).first();
 
         if (product && product.stock !== null) {
           // Deduz do estoque real e libera da reserva
@@ -1305,38 +1247,19 @@ app.delete(
   authorizeKitchen,
   async (req, res) => {
     try {
-      const storeId = req.storeId;
+      console.log(`🗑️ DELETE pedido ${req.params.id}`);
 
-      console.log(`🗑️ DELETE pedido ${req.params.id} da loja ${storeId}`);
-
-      // Primeiro verifica se o pedido existe (sem filtro de loja)
-      const orderExists = await db("orders")
-        .where({ id: req.params.id })
-        .first();
-      console.log(
-        `📦 Pedido existe?`,
-        orderExists ? `SIM (store_id: ${orderExists.store_id})` : "NÃO",
-      );
-
-      let query = db("orders").where({ id: req.params.id });
-
-      // Filtra por loja se storeId estiver presente
-      if (storeId) {
-        query = query.where({ store_id: storeId });
-      }
-
-      const order = await query.first();
+      // Verifica se o pedido existe
+      const order = await db("orders").where({ id: req.params.id }).first();
+      console.log(`📦 Pedido existe?`, order ? `SIM` : "NÃO");
 
       if (!order) {
-        console.log(`❌ Pedido não encontrado com filtro de loja ${storeId}`);
-        return res
-          .status(404)
-          .json({ error: "Pedido não encontrado nesta loja" });
+        console.log(`❌ Pedido não encontrado`);
+        return res.status(404).json({ error: "Pedido não encontrado" });
       }
 
       console.log(`✅ Pedido encontrado:`, {
         id: order.id,
-        store_id: order.store_id,
         status: order.status,
       });
 
@@ -1349,14 +1272,7 @@ app.delete(
         const items = parseJSON(order.items);
 
         for (const item of items) {
-          let productQuery = db("products").where({ id: item.id });
-
-          // Filtra por loja se storeId estiver presente
-          if (storeId) {
-            productQuery = productQuery.where({ store_id: storeId });
-          }
-
-          const product = await productQuery.first();
+          const product = await db("products").where({ id: item.id }).first();
 
           if (product && product.stock !== null && product.stock_reserved > 0) {
             const newReserved = Math.max(
@@ -1393,18 +1309,14 @@ app.get("/api/user-orders", async (req, res) => {
   try {
     const { userId } = req.query;
     console.log(`📋 [GET /api/user-orders] userId: ${userId}`);
-    let query = db("orders")
-      .where({ store_id: storeId })
-      .orderBy("timestamp", "desc");
 
+    let query = db("orders").orderBy("timestamp", "desc");
     if (userId) {
       query = query.where({ userId });
     }
-
     const allOrders = await query.select("*");
-
     console.log(
-      `📋 [GET /api/user-orders] ${allOrders.length} pedidos encontrados na loja ${storeId}`,
+      `📋 [GET /api/user-orders] ${allOrders.length} pedidos encontrados`,
     );
 
     res.json(
@@ -1465,8 +1377,7 @@ app.post("/api/notifications/mercadopago", async (req, res) => {
 
       // Single-tenant: utilize credenciais globais
       let intent = null;
-      let storeConfig = null;
-      // ...implemente aqui a lógica single-tenant se necessário...
+      // Single-tenant: utilize apenas credenciais globais
       // Exemplo: buscar intent usando process.env.MP_ACCESS_TOKEN
       // ...existing code...
 
@@ -1476,7 +1387,10 @@ app.post("/api/notifications/mercadopago", async (req, res) => {
 
         // Limpa a fila
         try {
-          await paymentService.clearPaymentQueue(storeConfig);
+          await paymentService.clearPaymentQueue({
+            mp_access_token: MP_ACCESS_TOKEN,
+            mp_device_id: MP_DEVICE_ID,
+          });
           console.log(`🧹 Fila limpa após cancelamento via IPN`);
         } catch (e) {
           console.warn(`⚠️ Erro ao limpar fila: ${e.message}`);
@@ -1535,7 +1449,7 @@ app.post("/api/notifications/mercadopago", async (req, res) => {
 
         const paymentUrl = `https://api.mercadopago.com/v1/payments/${paymentId}`;
         const paymentResp = await fetch(paymentUrl, {
-          headers: { Authorization: `Bearer ${storeConfig.mp_access_token}` },
+          headers: { Authorization: `Bearer ${MP_ACCESS_TOKEN}` },
         });
 
         if (paymentResp.ok) {
@@ -1569,7 +1483,10 @@ app.post("/api/notifications/mercadopago", async (req, res) => {
 
             // Limpa a fila
             try {
-              await paymentService.clearPaymentQueue(storeConfig);
+              await paymentService.clearPaymentQueue({
+                mp_access_token: MP_ACCESS_TOKEN,
+                mp_device_id: MP_DEVICE_ID,
+              });
               console.log(`🧹 Fila limpa após aprovação via IPN`);
             } catch (e) {
               console.warn(`⚠️ Erro ao limpar fila: ${e.message}`);
@@ -1644,7 +1561,10 @@ app.post("/api/notifications/mercadopago", async (req, res) => {
 
             // Limpa a fila
             try {
-              await paymentService.clearPaymentQueue(storeConfig);
+              await paymentService.clearPaymentQueue({
+                mp_access_token: MP_ACCESS_TOKEN,
+                mp_device_id: MP_DEVICE_ID,
+              });
               console.log(`🧹 Fila limpa após rejeição via IPN`);
             } catch (e) {
               console.warn(`⚠️ Erro ao limpar fila: ${e.message}`);
@@ -1914,10 +1834,10 @@ app.post("/api/webhooks/mercadopago", async (req, res) => {
 // ESTES ENDPOINTS FORAM REFATORADOS PARA:
 // - services/paymentService.js (lógica de negócio)
 // - controllers/paymentController.js (validação e controle)
-// - routes/payment.js (rotas com middleware resolveStore)
+// - routes/payment.js (rotas de pagamento)
 //
-// Agora cada loja usa suas próprias credenciais do Mercado Pago (mp_access_token, mp_device_id)
-// Os novos endpoints estão em: /api/payment/* e exigem header x-store-id
+// Agora usa apenas credenciais globais do Mercado Pago (mp_access_token, mp_device_id)
+// Os endpoints estão em: /api/payment/*
 //
 // MANTER COMENTADO PARA REFERÊNCIA - REMOVER APÓS VALIDAÇÃO EM PRODUÇÃO
 // ============================================================================
@@ -1927,25 +1847,10 @@ app.post("/api/webhooks/mercadopago", async (req, res) => {
 // CRIAR PAGAMENTO PIX (QR Code na tela)
 app.post("/api/payment/create-pix", async (req, res) => {
   const { amount, description, orderId } = req.body;
-  const storeId = req.storeId; // Do middleware
 
-  // Busca credenciais da loja
-  let MP_ACCESS_TOKEN, MP_DEVICE_ID;
-  if (storeId) {
-    // Loja única: não busca mais na tabela stores
-    if (store) {
-      MP_ACCESS_TOKEN = store.mp_access_token;
-      MP_DEVICE_ID = store.mp_device_id;
-      console.log(`✅ Usando credenciais da loja ${storeId}`);
-    }
-  }
-
-  // Fallback para credenciais globais
-  if (!MP_ACCESS_TOKEN) {
-    MP_ACCESS_TOKEN = process.env.MP_ACCESS_TOKEN;
-    MP_DEVICE_ID = process.env.MP_DEVICE_ID;
-    console.warn("⚠️ Usando credenciais globais");
-  }
+  // Usa apenas credenciais globais (single-tenant)
+  const MP_ACCESS_TOKEN = process.env.MP_ACCESS_TOKEN;
+  const MP_DEVICE_ID = process.env.MP_DEVICE_ID;
 
   if (!MP_ACCESS_TOKEN) {
     console.error("Faltam credenciais do Mercado Pago");
@@ -1954,9 +1859,7 @@ app.post("/api/payment/create-pix", async (req, res) => {
 
   try {
     console.log(`💚 Criando pagamento PIX (QR Code) de R$ ${amount}...`);
-    console.log(
-      `📦 Payload: amount=${amount}, orderId=${orderId}, storeId=${storeId}`,
-    );
+    console.log(`📦 Payload: amount=${amount}, orderId=${orderId}`);
 
     const paymentPayload = {
       transaction_amount: parseFloat(amount),
@@ -2137,86 +2040,18 @@ app.get("/api/pix/status/:id", async (req, res) => {
 // CRIAR PAGAMENTO NA MAQUININHA (Point Integration API - volta ao original)
 app.post("/api/payment/create-card", async (req, res) => {
   const { amount, description, orderId, paymentMethod } = req.body;
-  const storeId = req.storeId; // Do middleware
-
-  // Busca credenciais da loja
-  let MP_ACCESS_TOKEN, MP_DEVICE_ID;
-  if (storeId) {
-    // Loja única: não busca mais na tabela stores
-    if (store) {
-      MP_ACCESS_TOKEN = store.mp_access_token;
-      MP_DEVICE_ID = store.mp_device_id;
-      console.log(`✅ Usando credenciais da loja ${storeId}`);
-    }
-  }
-
-  // Fallback para credenciais globais
-  if (!MP_ACCESS_TOKEN) {
-    MP_ACCESS_TOKEN = process.env.MP_ACCESS_TOKEN;
-    MP_DEVICE_ID = process.env.MP_DEVICE_ID;
-    console.warn("⚠️ Usando credenciais globais");
-  }
+  // Usa apenas credenciais globais (single-tenant)
+  const MP_ACCESS_TOKEN = process.env.MP_ACCESS_TOKEN;
+  const MP_DEVICE_ID = process.env.MP_DEVICE_ID;
 
   // ✅ DETECÇÃO AUTOMÁTICA: Se for PIX, gera QR Code (Payments API) - NÃO DEVERIA CHEGAR AQUI
   if (paymentMethod === "pix") {
-    console.log(`🔀 PIX detectado - gerando QR Code (Payments API)`);
-
-    try {
-      // Gera chave idempotente única
-      const idempotencyKey = `pix_${orderId}_${Date.now()}`;
-
-      const pixPayload = {
-        transaction_amount: parseFloat(amount),
-        description: description || `Pedido ${orderId}`,
-        payment_method_id: "pix",
-        payer: {
-          email: "cliente@totem.com.br",
-          first_name: "Cliente",
-          last_name: "Totem",
-        },
-        external_reference: orderId,
-        notification_url:
-          "https://backendkioskpro.onrender.com/api/notifications/mercadopago",
-      };
-
-      console.log(`📤 Payload PIX:`, JSON.stringify(pixPayload, null, 2));
-
-      const response = await fetch("https://api.mercadopago.com/v1/payments", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${MP_ACCESS_TOKEN}`,
-          "Content-Type": "application/json",
-          "X-Idempotency-Key": idempotencyKey,
-        },
-        body: JSON.stringify(pixPayload),
-      });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        console.error("❌ Erro ao criar PIX:", data);
-        throw new Error(data.message || "Erro ao criar PIX");
-      }
-
-      console.log(`✅ PIX QR Code criado! Payment ID: ${data.id}`);
-      console.log(
-        `📱 QR Code:`,
-        data.point_of_interaction?.transaction_data?.qr_code?.substring(0, 50),
-      );
-
-      return res.json({
-        id: data.id,
-        status: data.status,
-        qr_code: data.point_of_interaction?.transaction_data?.qr_code,
-        qr_code_base64:
-          data.point_of_interaction?.transaction_data?.qr_code_base64,
-        ticket_url: data.point_of_interaction?.transaction_data?.ticket_url,
-        type: "pix",
-      });
-    } catch (error) {
-      console.error("❌ Erro ao criar PIX:", error);
-      return res.status(500).json({ error: error.message });
-    }
+    console.log(
+      `🔀 PIX detectado - redirecionando para /api/payment/create-pix`,
+    );
+    return res.status(400).json({
+      error: "Use o endpoint /api/payment/create-pix para pagamentos PIX.",
+    });
   }
 
   // ✅ CARTÕES: Segue para maquininha
@@ -2304,44 +2139,24 @@ app.post("/api/payment/create-card", async (req, res) => {
 // Verificar status PAGAMENTO (híbrido: Order PIX ou Payment Intent Point)
 app.get("/api/payment/status/:paymentId", async (req, res) => {
   const { paymentId } = req.params;
-  const storeId = req.storeId; // Do middleware
 
   if (paymentId.startsWith("mock_")) return res.json({ status: "approved" });
 
   try {
-    console.log(
-      `🔍 [STATUS] Verificando pagamento: ${paymentId} (loja: ${storeId})`,
-    );
+    console.log(`🔍 [STATUS] Verificando pagamento: ${paymentId}`);
 
-    // Busca credenciais da loja
-    let storeConfig;
-    if (storeId) {
-      // Loja única: não busca mais na tabela stores
-      if (store) {
-        storeConfig = {
-          mp_access_token: store.mp_access_token,
-          mp_device_id: store.mp_device_id,
-        };
-        console.log(`✅ [STATUS] Usando credenciais da loja ${storeId}`);
-      }
-    }
-
-    // Fallback para credenciais globais (backwards compatibility)
-    if (!storeConfig) {
-      console.warn(
-        `⚠️ [STATUS] Loja não encontrada, usando credenciais globais`,
-      );
-      storeConfig = {
-        mp_access_token: MP_ACCESS_TOKEN,
-        mp_device_id: MP_DEVICE_ID,
-      };
-    }
+    // Usa apenas credenciais globais (single-tenant)
+    const storeConfig = {
+      mp_access_token: MP_ACCESS_TOKEN,
+      mp_device_id: MP_DEVICE_ID,
+    };
 
     if (!storeConfig.mp_access_token) {
       return res.status(500).json({ error: "Credenciais MP não configuradas" });
     }
 
     // 1. Tenta buscar como Payment Intent (Point Integration API)
+
     const intentUrl = `https://api.mercadopago.com/point/integration-api/payment-intents/${paymentId}`;
     const intentResponse = await fetch(intentUrl, {
       headers: { Authorization: `Bearer ${storeConfig.mp_access_token}` },
@@ -2377,7 +2192,10 @@ app.get("/api/payment/status/:paymentId", async (req, res) => {
               // 🧹 Limpa a fila após aprovação
               try {
                 console.log(`🧹 Limpando fila após aprovação...`);
-                await paymentService.clearPaymentQueue(storeConfig);
+                await paymentService.clearPaymentQueue({
+                  mp_access_token: MP_ACCESS_TOKEN,
+                  mp_device_id: MP_DEVICE_ID,
+                });
               } catch (queueError) {
                 console.warn(`⚠️ Erro ao limpar fila: ${queueError.message}`);
               }
@@ -2402,7 +2220,10 @@ app.get("/api/payment/status/:paymentId", async (req, res) => {
               // 🧹 Limpa a fila após rejeição
               try {
                 console.log(`🧹 Limpando fila após rejeição...`);
-                await paymentService.clearPaymentQueue(storeConfig);
+                await paymentService.clearPaymentQueue({
+                  mp_access_token: MP_ACCESS_TOKEN,
+                  mp_device_id: MP_DEVICE_ID,
+                });
               } catch (queueError) {
                 console.warn(`⚠️ Erro ao limpar fila: ${queueError.message}`);
               }
@@ -2519,7 +2340,10 @@ app.get("/api/payment/status/:paymentId", async (req, res) => {
         // 🧹 Limpa a fila após cancelamento/erro
         try {
           console.log(`🧹 Limpando fila após ${intent.state}...`);
-          await paymentService.clearPaymentQueue(storeConfig);
+          await paymentService.clearPaymentQueue({
+            mp_access_token: MP_ACCESS_TOKEN,
+            mp_device_id: MP_DEVICE_ID,
+          });
         } catch (queueError) {
           console.warn(`⚠️ Erro ao limpar fila: ${queueError.message}`);
         }
@@ -2596,6 +2420,7 @@ app.get("/api/payment/status/:paymentId", async (req, res) => {
 
     // 2. Se não é Payment Intent, tenta como Payment PIX
     console.log(`🔄 Não é Payment Intent, tentando como Payment PIX...`);
+
     const paymentUrl = `https://api.mercadopago.com/v1/payments/${paymentId}`;
     const paymentResponse = await fetch(paymentUrl, {
       headers: { Authorization: `Bearer ${storeConfig.mp_access_token}` },
@@ -2652,24 +2477,9 @@ app.get("/api/payment/status-pix/:orderId", async (req, res) => {
 // Cancelar pagamento específico (Point Intent ou PIX Payment)
 app.delete("/api/payment/cancel/:paymentId", async (req, res) => {
   const { paymentId } = req.params;
-  const storeId = req.storeId;
-
-  // Busca credenciais da loja
-  let MP_ACCESS_TOKEN_LOCAL, MP_DEVICE_ID_LOCAL;
-  if (storeId) {
-    // Loja única: não busca mais na tabela stores
-    if (store) {
-      MP_ACCESS_TOKEN_LOCAL = store.mp_access_token;
-      MP_DEVICE_ID_LOCAL = store.mp_device_id;
-      console.log(`✅ [CANCEL] Usando credenciais da loja ${storeId}`);
-    }
-  }
-
-  // Fallback para credenciais globais
-  if (!MP_ACCESS_TOKEN_LOCAL) {
-    MP_ACCESS_TOKEN_LOCAL = MP_ACCESS_TOKEN;
-    MP_DEVICE_ID_LOCAL = MP_DEVICE_ID;
-  }
+  // Usa apenas credenciais globais (single-tenant)
+  const MP_ACCESS_TOKEN_LOCAL = MP_ACCESS_TOKEN;
+  const MP_DEVICE_ID_LOCAL = MP_DEVICE_ID;
 
   if (!MP_ACCESS_TOKEN_LOCAL) {
     return res.json({ success: true, message: "Mock cancelado" });
@@ -2741,24 +2551,9 @@ app.delete("/api/payment/cancel/:paymentId", async (req, res) => {
 
 // Limpar TODA a fila da maquininha (útil para logout/sair)
 app.post("/api/payment/clear-all", async (req, res) => {
-  const storeId = req.storeId;
-
-  // Busca credenciais da loja
-  let MP_ACCESS_TOKEN_LOCAL, MP_DEVICE_ID_LOCAL;
-  if (storeId) {
-    // Loja única: não busca mais na tabela stores
-    if (store) {
-      MP_ACCESS_TOKEN_LOCAL = store.mp_access_token;
-      MP_DEVICE_ID_LOCAL = store.mp_device_id;
-      console.log(`✅ [CLEAR-ALL] Usando credenciais da loja ${storeId}`);
-    }
-  }
-
-  // Fallback para credenciais globais
-  if (!MP_ACCESS_TOKEN_LOCAL) {
-    MP_ACCESS_TOKEN_LOCAL = MP_ACCESS_TOKEN;
-    MP_DEVICE_ID_LOCAL = MP_DEVICE_ID;
-  }
+  // Usa apenas credenciais globais (single-tenant)
+  const MP_ACCESS_TOKEN_LOCAL = MP_ACCESS_TOKEN;
+  const MP_DEVICE_ID_LOCAL = MP_DEVICE_ID;
 
   if (!MP_ACCESS_TOKEN_LOCAL || !MP_DEVICE_ID_LOCAL) {
     return res.json({ success: true, cleared: 0 });
@@ -2821,17 +2616,9 @@ app.post("/api/payment/clear-all", async (req, res) => {
 
 // Configurar Point Smart 2 (modo operacional e vinculação)
 app.post("/api/point/configure", async (req, res) => {
-  const storeId = req.storeId;
-
-  // Busca credenciais da loja
-  let MP_ACCESS_TOKEN_LOCAL, MP_DEVICE_ID_LOCAL;
-  // Loja única: não busca mais na tabela stores
-
-  // Fallback para credenciais globais
-  if (!MP_ACCESS_TOKEN_LOCAL) {
-    MP_ACCESS_TOKEN_LOCAL = MP_ACCESS_TOKEN;
-    MP_DEVICE_ID_LOCAL = MP_DEVICE_ID;
-  }
+  // Usa apenas credenciais globais (single-tenant)
+  const MP_ACCESS_TOKEN_LOCAL = MP_ACCESS_TOKEN;
+  const MP_DEVICE_ID_LOCAL = MP_DEVICE_ID;
 
   if (!MP_ACCESS_TOKEN_LOCAL || !MP_DEVICE_ID_LOCAL) {
     return res.json({ success: false, error: "Credenciais não configuradas" });
@@ -2881,24 +2668,9 @@ app.post("/api/point/configure", async (req, res) => {
 
 // Verificar status da Point Smart 2
 app.get("/api/point/status", async (req, res) => {
-  const storeId = req.storeId;
-
-  // Busca credenciais da loja
-  let MP_ACCESS_TOKEN_LOCAL, MP_DEVICE_ID_LOCAL;
-  if (storeId) {
-    // Loja única: não busca mais na tabela stores
-    if (store) {
-      MP_ACCESS_TOKEN_LOCAL = store.mp_access_token;
-      MP_DEVICE_ID_LOCAL = store.mp_device_id;
-      console.log(`✅ [POINT-STATUS] Usando credenciais da loja ${storeId}`);
-    }
-  }
-
-  // Fallback para credenciais globais
-  if (!MP_ACCESS_TOKEN_LOCAL) {
-    MP_ACCESS_TOKEN_LOCAL = MP_ACCESS_TOKEN;
-    MP_DEVICE_ID_LOCAL = MP_DEVICE_ID;
-  }
+  // Usa apenas credenciais globais (single-tenant)
+  const MP_ACCESS_TOKEN_LOCAL = MP_ACCESS_TOKEN;
+  const MP_DEVICE_ID_LOCAL = MP_DEVICE_ID;
 
   if (!MP_ACCESS_TOKEN_LOCAL || !MP_DEVICE_ID_LOCAL) {
     console.error("⚠️ Status Point: Credenciais não configuradas");
@@ -2950,24 +2722,9 @@ app.get("/api/point/status", async (req, res) => {
 
 // Limpar TODA a fila de pagamentos da maquininha (chamar após pagamento aprovado)
 app.post("/api/payment/clear-queue", async (req, res) => {
-  const storeId = req.storeId;
-
-  // Busca credenciais da loja
-  let MP_ACCESS_TOKEN_LOCAL, MP_DEVICE_ID_LOCAL;
-  if (storeId) {
-    // Loja única: não busca mais na tabela stores
-    if (store) {
-      MP_ACCESS_TOKEN_LOCAL = store.mp_access_token;
-      MP_DEVICE_ID_LOCAL = store.mp_device_id;
-      console.log(`✅ [CLEAR-QUEUE] Usando credenciais da loja ${storeId}`);
-    }
-  }
-
-  // Fallback para credenciais globais
-  if (!MP_ACCESS_TOKEN_LOCAL) {
-    MP_ACCESS_TOKEN_LOCAL = MP_ACCESS_TOKEN;
-    MP_DEVICE_ID_LOCAL = MP_DEVICE_ID;
-  }
+  // Usa apenas credenciais globais (single-tenant)
+  const MP_ACCESS_TOKEN_LOCAL = MP_ACCESS_TOKEN;
+  const MP_DEVICE_ID_LOCAL = MP_DEVICE_ID;
 
   if (!MP_ACCESS_TOKEN_LOCAL || !MP_DEVICE_ID_LOCAL) {
     return res.json({ success: true, cleared: 0 });
@@ -3107,9 +2864,6 @@ Resposta: "Recomendo nosso Suco de Melancia, super refrescante! 🍉"
 });
 
 app.post("/api/ai/chat", async (req, res) => {
-  console.log(`🔍 [IA CHAT] Headers recebidos:`, req.headers["x-store-id"]);
-  console.log(`🔍 [IA CHAT] storeId do middleware:`, req.storeId);
-
   if (!openai) {
     console.log(
       "❌ OpenAI não inicializada - OPENAI_API_KEY está configurada?",
@@ -3117,22 +2871,8 @@ app.post("/api/ai/chat", async (req, res) => {
     return res.status(503).json({ error: "IA indisponível" });
   }
   try {
-    const storeId = req.storeId; // 🏪 MULTI-TENANT
-
-    if (!storeId) {
-      console.log("⚠️ [IA CHAT] storeId ausente!");
-      return res.json({ text: "Erro: loja não identificada" });
-    }
-
-    console.log(`🤖 [IA CHAT] Loja: ${storeId}`);
-
-    // Busca informações da loja
-    // Loja única: não busca mais na tabela stores
-    const storeName = store?.name || storeId;
-
-    // Busca produtos da loja para contexto
+    // Busca produtos globais para contexto
     const products = await db("products")
-      .where({ store_id: storeId })
       .select("name", "category", "price")
       .limit(10);
 
@@ -3140,20 +2880,8 @@ app.post("/api/ai/chat", async (req, res) => {
       .map((p) => `${p.name} (${p.category})`)
       .join(", ");
 
-    // Determina contexto baseado na loja
-    let systemPrompt = `Você é um atendente amigável da ${storeName}.`;
-
-    if (
-      storeId.includes("sushi") ||
-      storeName.toLowerCase().includes("sushi")
-    ) {
-      systemPrompt = `Você é um atendente especializado em culinária japonesa da ${storeName}. Ajude com dúvidas sobre sushi, sashimi, temaki e outros pratos orientais. Alguns dos nossos produtos: ${productContext}`;
-    } else if (
-      storeId.includes("pastel") ||
-      storeName.toLowerCase().includes("pastel")
-    ) {
-      systemPrompt = `Você é um atendente de pastelaria da ${storeName}. Ajude com dúvidas sobre pastéis, salgados e bebidas. Alguns dos nossos produtos: ${productContext}`;
-    }
+    // Contexto fixo para PrimePlush
+    const systemPrompt = `Você é um atendente amigável da PrimePlush, uma loja de pelúcias e brinquedos. Ajude os clientes com dúvidas sobre nossos produtos. Alguns dos nossos produtos: ${productContext}`;
 
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
@@ -3163,7 +2891,7 @@ app.post("/api/ai/chat", async (req, res) => {
       ],
       max_tokens: 150,
     });
-    console.log(`✅ Resposta OpenAI recebida para ${storeName}!`);
+    console.log(`✅ Resposta OpenAI recebida para PrimePlush!`);
     res.json({ text: completion.choices[0].message.content });
   } catch (e) {
     console.error("❌ ERRO OpenAI:", e.message);
@@ -3184,32 +2912,14 @@ let kitchenCache = {
 };
 
 app.get("/api/ai/kitchen-priority", async (req, res) => {
-  const storeId = req.storeId; // 🏪 MULTI-TENANT
-  console.log(`🍳 [GET /api/ai/kitchen-priority] storeId: ${storeId}`);
-  console.log(
-    `🍳 [GET /api/ai/kitchen-priority] Headers:`,
-    req.headers["x-store-id"],
-  );
-  console.log(
-    `🍳 [GET /api/ai/kitchen-priority] Authorization:`,
-    req.headers["authorization"] ? "Presente" : "Ausente",
-  );
-
-  if (!storeId) {
-    console.log(`⚠️ [KITCHEN-PRIORITY] storeId ausente!`);
-    return res.status(400).json({
-      error: "storeId ausente",
-      orders: [],
-      aiEnabled: false,
-    });
-  }
+  // Single-tenant
 
   if (!openai) {
     console.log("❌ OpenAI não inicializada - retornando ordem padrão");
     // Se IA indisponível, retorna ordem cronológica normal
     try {
       const orders = await db("orders")
-        .where({ status: "active", store_id: storeId }) // 🏪 Filtro multi-tenant
+        .where({ status: "active" })
         .orderBy("timestamp", "asc")
         .select("*");
 
@@ -3225,10 +2935,10 @@ app.get("/api/ai/kitchen-priority", async (req, res) => {
 
   try {
     // 1. Busca pedidos ativos (não finalizados) - ORDENADOS DO MAIS ANTIGO PARA O MAIS RECENTE
-    // Esta é a ordem BASE (FIFO) que a IA deve respeitar ao otimizar
+    // Single-tenant: busca todos os pedidos ativos
     const orders = await db("orders")
-      .where({ status: "active", store_id: storeId }) // 🏪 Filtro multi-tenant
-      .orderBy("timestamp", "asc") // ASC = Mais antigo primeiro (CORRETO!)
+      .where({ status: "active" })
+      .orderBy("timestamp", "asc")
       .select("*");
 
     if (orders.length === 0) {
@@ -3270,9 +2980,7 @@ app.get("/api/ai/kitchen-priority", async (req, res) => {
     console.log(`📋 ${orders.length} pedido(s) na fila`);
 
     // 2. Busca informações dos produtos para calcular complexidade
-    const products = await db("products")
-      .where({ store_id: storeId }) // 🏪 Filtro multi-tenant
-      .select("*");
+    const products = await db("products").select("*");
     const productMap = {};
     products.forEach((p) => {
       productMap[p.id] = p;
@@ -3485,7 +3193,7 @@ app.get("/api/ai/inventory-analysis", async (req, res) => {
 
   try {
     console.log(
-      `🤖 Iniciando análise inteligente de estoque da loja ${storeId}...`,
+      `🤖 Iniciando análise inteligente de estoque (single-tenant)...`,
     );
 
     // 1. Buscar todos os produtos
@@ -3703,7 +3411,7 @@ app.get("/api/super-admin/dashboard", async (req, res) => {
 });
 
 // 📊 Top 5 Produtos Mais Vendidos de uma Loja
-app.get("/api/super-admin/store/:storeId/top-products", async (req, res) => {
+app.get("/api/super-admin/top-products", async (req, res) => {
   try {
     // Verifica autenticação de Super Admin
     const superAdminPassword = req.headers["x-super-admin-password"];
@@ -3720,12 +3428,11 @@ app.get("/api/super-admin/store/:storeId/top-products", async (req, res) => {
       });
     }
 
-    const { storeId } = req.params;
-    console.log(`📊 [TOP-PRODUCTS] Buscando top produtos da loja ${storeId}`);
+    // Single-tenant
+    console.log(`📊 [TOP-PRODUCTS] Buscando top produtos (single-tenant)`);
 
-    // Busca todos os pedidos pagos da loja
+    // Busca todos os pedidos pagos (single-tenant)
     const orders = await db("orders")
-      .where({ store_id: storeId })
       .whereIn("paymentStatus", ["paid", "authorized"])
       .select("items");
 
@@ -3772,7 +3479,7 @@ app.get("/api/super-admin/store/:storeId/top-products", async (req, res) => {
 });
 
 // 📈 Histórico de Vendas (Últimos N Dias)
-app.get("/api/super-admin/store/:storeId/sales-history", async (req, res) => {
+app.get("/api/super-admin/sales-history", async (req, res) => {
   try {
     // Verifica autenticação de Super Admin
     const superAdminPassword = req.headers["x-super-admin-password"];
@@ -3789,20 +3496,19 @@ app.get("/api/super-admin/store/:storeId/sales-history", async (req, res) => {
       });
     }
 
-    const { storeId } = req.params;
+    // Single-tenant
     const days = parseInt(req.query.days) || 7;
 
     console.log(
-      `📈 [SALES-HISTORY] Buscando últimos ${days} dias da loja ${storeId}`,
+      `📈 [SALES-HISTORY] Buscando últimos ${days} dias (single-tenant)`,
     );
 
     // Calcula data inicial
     const startDate = new Date();
     startDate.setDate(startDate.getDate() - days);
 
-    // Busca pedidos pagos do período
+    // Busca pedidos pagos do período (single-tenant)
     const orders = await db("orders")
-      .where({ store_id: storeId })
       .whereIn("paymentStatus", ["paid", "authorized"])
       .where("timestamp", ">=", startDate.toISOString())
       .select("timestamp", "total");
@@ -3854,53 +3560,53 @@ app.get("/api/super-admin/store/:storeId/sales-history", async (req, res) => {
   }
 });
 
-// 🔧 ENDPOINT TEMPORÁRIO: Atualizar credenciais do sushiman1
-app.get("/api/admin/update-sushiman1-credentials", async (req, res) => {
-  try {
-    console.log("🔧 Atualizando credenciais da loja sushiman1...");
+// // 🔧 ENDPOINT TEMPORÁRIO: Atualizar credenciais do sushiman1
+// app.get("/api/admin/update-sushiman1-credentials", async (req, res) => {
+//   try {
+//     console.log("🔧 Atualizando credenciais da loja sushiman1...");
 
-    const newAccessToken =
-      "APP_USR-2380991543282785-120915-186724196695d70b571258710e1f9645-272635919";
-    const newDeviceId = "GERTEC_MP35P__8701012151238699";
+//     const newAccessToken =
+//       "APP_USR-2380991543282785-120915-186724196695d70b571258710e1f9645-272635919";
+//     const newDeviceId = "GERTEC_MP35P__8701012151238699";
 
-    // Loja única: não atualiza mais tabela stores
-    // Se necessário, atualize as variáveis de ambiente manualmente na Render
-    res.json({
-      success: true,
-      message:
-        "Loja única: atualize as credenciais nas variáveis de ambiente da Render.",
-      mp_access_token: newAccessToken,
-      mp_device_id: newDeviceId,
-    });
+//     // Loja única: não atualiza mais tabela stores
+//     // Se necessário, atualize as variáveis de ambiente manualmente na Render
+//     res.json({
+//       success: true,
+//       message:
+//         "Loja única: atualize as credenciais nas variáveis de ambiente da Render.",
+//       mp_access_token: newAccessToken,
+//       mp_device_id: newDeviceId,
+//     });
 
-    // Verifica se foi atualizado
-    // Loja única: não busca mais na tabela stores
+//     // Verifica se foi atualizado
+//     // Loja única: não busca mais na tabela stores
 
-    console.log("✅ Credenciais do sushiman1 atualizadas com sucesso!");
-    console.log(
-      `   Access Token: ${updatedStore.mp_access_token.substring(0, 20)}...`,
-    );
-    console.log(`   Device ID: ${updatedStore.mp_device_id}`);
+//     console.log("✅ Credenciais do sushiman1 atualizadas com sucesso!");
+//     console.log(
+//       `   Access Token: ${updatedStore.mp_access_token.substring(0, 20)}...`,
+//     );
+//     console.log(`   Device ID: ${updatedStore.mp_device_id}`);
 
-    res.json({
-      success: true,
-      message: "Credenciais do sushiman1 atualizadas com sucesso!",
-      store: {
-        id: updatedStore.id,
-        name: updatedStore.name,
-        mp_device_id: updatedStore.mp_device_id,
-        mp_access_token: updatedStore.mp_access_token.substring(0, 20) + "...",
-      },
-    });
-  } catch (error) {
-    console.error("❌ Erro ao atualizar credenciais:", error);
-    res.status(500).json({
-      success: false,
-      error: "Erro ao atualizar credenciais",
-      message: error.message,
-    });
-  }
-});
+//     res.json({
+//       success: true,
+//       message: "Credenciais do sushiman1 atualizadas com sucesso!",
+//       store: {
+//         id: updatedStore.id,
+//         name: updatedStore.name,
+//         mp_device_id: updatedStore.mp_device_id,
+//         mp_access_token: updatedStore.mp_access_token.substring(0, 20) + "...",
+//       },
+//     });
+//   } catch (error) {
+//     console.error("❌ Erro ao atualizar credenciais:", error);
+//     res.status(500).json({
+//       success: false,
+//       error: "Erro ao atualizar credenciais",
+//       message: error.message,
+//     });
+//   }
+// });
 
 // --- Inicialização ---
 console.log("🚀 Iniciando servidor...");
