@@ -3477,13 +3477,7 @@ Retorne APENAS o JSON, sem texto adicional.`,
 // --- ANÁLISE INTELIGENTE DE ESTOQUE E VENDAS (Admin) ---
 
 app.get("/api/ai/inventory-analysis", async (req, res) => {
-  const storeId = req.storeId; // 🏪 MULTI-TENANT
-
-  console.log(`📊 [INVENTORY-ANALYSIS] Loja: ${storeId}`);
-
-  if (!storeId) {
-    return res.status(400).json({ error: "storeId ausente" });
-  }
+  console.log(`📊 [INVENTORY-ANALYSIS] (single-tenant)`);
 
   if (!openai) {
     return res.status(503).json({ error: "IA indisponível no momento" });
