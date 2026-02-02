@@ -1172,7 +1172,7 @@ app.post("/api/orders", async (req, res) => {
 // Atualizar pedido (adicionar paymentId após pagamento aprovado)
 app.put("/api/orders/:id", async (req, res) => {
   const { id } = req.params;
-  const { paymentId, paymentStatus } = req.body;
+  let { paymentId, paymentStatus } = req.body;
 
   try {
     console.log(`📝 Atualizando pedido ${id} com payment ${paymentId}...`);
@@ -1184,8 +1184,23 @@ app.put("/api/orders/:id", async (req, res) => {
       return res.status(404).json({ error: "Pedido não encontrado" });
     }
 
+    // Validação: paymentId deve ser string ou null
+    if (paymentId !== undefined && paymentId !== null) {
+      if (typeof paymentId !== "string") {
+        paymentId = String(paymentId);
+      }
+      // Se vier objeto/array, zera
+      if (
+        typeof paymentId !== "string" ||
+        paymentId === "[object Object]" ||
+        Array.isArray(paymentId)
+      ) {
+        paymentId = null;
+      }
+    }
+
     const updates = {};
-    if (paymentId) updates.paymentId = paymentId;
+    if (paymentId !== undefined) updates.paymentId = paymentId;
     if (paymentStatus) updates.paymentStatus = paymentStatus;
 
     // 🎯 Se pagamento aprovado, libera pedido para cozinha
