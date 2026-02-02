@@ -1173,6 +1173,8 @@ app.post("/api/orders", async (req, res) => {
 app.put("/api/orders/:id", async (req, res) => {
   const { id } = req.params;
   let { paymentId, paymentStatus } = req.body;
+  // Importa serviço de pagamento para validação
+  const { checkPaymentStatus } = await import("./services/paymentService.js");
 
   try {
     console.log(`📝 Atualizando pedido ${id} com payment ${paymentId}...`);
@@ -1203,14 +1205,46 @@ app.put("/api/orders/:id", async (req, res) => {
     if (paymentId !== undefined) updates.paymentId = paymentId;
     if (paymentStatus) updates.paymentStatus = paymentStatus;
 
-    // 🎯 Se pagamento aprovado, libera pedido para cozinha
-    if (paymentStatus === "paid" && order.status === "pending_payment") {
-      updates.status = "active";
-      console.log(`🍳 Pedido ${id} liberado para COZINHA!`);
+    // 🎯 Validação real do pagamento antes de liberar pedido
+    let isPaymentApproved = false;
+    if (
+      paymentId &&
+      paymentStatus === "paid" &&
+      order.status === "pending_payment"
+    ) {
+      try {
+        // Consulta status real do pagamento
+        const paymentResult = await checkPaymentStatus(paymentId, {
+          mp_access_token: process.env.MP_ACCESS_TOKEN,
+        });
+        if (
+          paymentResult &&
+          (paymentResult.status === "approved" ||
+            paymentResult.status === "authorized")
+        ) {
+          isPaymentApproved = true;
+        }
+      } catch (err) {
+        console.error(
+          "❌ Erro ao validar pagamento com Mercado Pago:",
+          err.message,
+        );
+      }
+      if (isPaymentApproved) {
+        updates.status = "active";
+        console.log(
+          `🍳 Pedido ${id} liberado para COZINHA! (Pagamento REAL aprovado)`,
+        );
+      } else {
+        console.warn(
+          `⚠️ Pagamento não aprovado pelo Mercado Pago. Pedido NÃO liberado.`,
+        );
+        updates.status = "pending_payment";
+      }
     }
 
     // Se pagamento foi aprovado, CONFIRMA a dedução do estoque
-    if (paymentStatus === "paid" && order.paymentStatus === "pending") {
+    if (isPaymentApproved && order.paymentStatus === "pending") {
       console.log(`✅ Pagamento aprovado! Confirmando dedução do estoque...`);
 
       const items = parseJSON(order.items);
