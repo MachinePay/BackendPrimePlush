@@ -3662,11 +3662,17 @@ app.get("/api/super-admin/sales-history", async (req, res) => {
 // Endpoint para histórico de pedidos com filtros de data
 app.get("/api/orders/history", async (req, res) => {
   try {
+    console.log(
+      "📋 [GET /api/orders/history] Buscando histórico de pedidos...",
+    );
     const { start, end } = req.query;
     let query = db("orders").orderBy("timestamp", "desc");
     if (start) query = query.where("timestamp", ">=", start);
     if (end) query = query.where("timestamp", "<=", end);
     const orders = await query;
+    console.log(
+      `📋 [GET /api/orders/history] Encontrados ${orders.length} pedidos`,
+    );
     const parsedOrders = orders.map((o) => ({
       ...o,
       items: typeof o.items === "string" ? JSON.parse(o.items) : o.items,
@@ -3674,7 +3680,13 @@ app.get("/api/orders/history", async (req, res) => {
     }));
     res.json(parsedOrders);
   } catch (e) {
-    res.status(500).json({ error: "Erro ao buscar histórico de pedidos" });
+    console.error("❌ [GET /api/orders/history] Erro:", e);
+    res
+      .status(500)
+      .json({
+        error: "Erro ao buscar histórico de pedidos",
+        message: e.message,
+      });
   }
 });
 
