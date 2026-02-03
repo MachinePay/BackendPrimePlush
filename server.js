@@ -1,3 +1,4 @@
+
 import express from "express";
 import fs from "fs/promises";
 import path from "path";
@@ -3606,6 +3607,21 @@ app.get("/api/super-admin/sales-history", async (req, res) => {
       error: "Erro ao buscar histórico de vendas",
       message: error.message,
     });
+  }
+});
+
+// Endpoint para buscar todos os pedidos
+app.get("/api/orders", async (req, res) => {
+  try {
+    const orders = await db("orders").orderBy("timestamp", "desc");
+    const parsedOrders = orders.map((o) => ({
+      ...o,
+      items: typeof o.items === "string" ? JSON.parse(o.items) : o.items,
+      total: parseFloat(o.total),
+    }));
+    res.json(parsedOrders);
+  } catch (e) {
+    res.status(500).json({ error: "Erro ao buscar pedidos" });
   }
 });
 
