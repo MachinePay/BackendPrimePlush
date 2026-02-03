@@ -1203,6 +1203,22 @@ app.post("/api/orders", async (req, res) => {
 });
 
 // Atualizar pedido (adicionar paymentId após pagamento aprovado)
+// Endpoint para marcar pedido como pago (presencial)
+app.put("/api/orders/:id/mark-paid", async (req, res) => {
+  const { id } = req.params;
+  try {
+    const order = await db("orders").where({ id }).first();
+    if (!order) {
+      return res.status(404).json({ error: "Pedido não encontrado" });
+    }
+    await db("orders").where({ id }).update({ paymentStatus: "paid" });
+    res.json({ success: true, message: "Pedido marcado como pago" });
+  } catch (e) {
+    console.error("❌ Erro ao marcar pedido como pago:", e);
+    res.status(500).json({ error: "Erro ao marcar pedido como pago" });
+  }
+});
+
 app.put("/api/orders/:id", async (req, res) => {
   const { id } = req.params;
   let { paymentId, paymentStatus } = req.body;
@@ -3643,6 +3659,25 @@ app.get("/api/super-admin/sales-history", async (req, res) => {
 });
 
 // Endpoint para buscar todos os pedidos
+// Endpoint para histórico de pedidos com filtros de data
+app.get("/api/orders/history", async (req, res) => {
+  try {
+    const { start, end } = req.query;
+    let query = db("orders").orderBy("timestamp", "desc");
+    if (start) query = query.where("timestamp", ">=", start);
+    if (end) query = query.where("timestamp", "<=", end);
+    const orders = await query;
+    const parsedOrders = orders.map((o) => ({
+      ...o,
+      items: typeof o.items === "string" ? JSON.parse(o.items) : o.items,
+      total: parseFloat(o.total),
+    }));
+    res.json(parsedOrders);
+  } catch (e) {
+    res.status(500).json({ error: "Erro ao buscar histórico de pedidos" });
+  }
+});
+
 app.get("/api/orders", async (req, res) => {
   try {
     const orders = await db("orders").orderBy("timestamp", "desc");
