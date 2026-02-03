@@ -1430,6 +1430,35 @@ app.get("/api/user-orders", async (req, res) => {
   }
 });
 
+// Endpoint para histórico de pedidos com filtros de data
+app.get("/api/orders/history", async (req, res) => {
+  try {
+    console.log(
+      "📋 [GET /api/orders/history] Buscando histórico de pedidos...",
+    );
+    const { start, end } = req.query;
+    let query = db("orders").orderBy("timestamp", "desc");
+    if (start) query = query.where("timestamp", ">=", start);
+    if (end) query = query.where("timestamp", "<=", end);
+    const orders = await query;
+    console.log(
+      `📋 [GET /api/orders/history] Encontrados ${orders.length} pedidos`,
+    );
+    const parsedOrders = orders.map((o) => ({
+      ...o,
+      items: typeof o.items === "string" ? JSON.parse(o.items) : o.items,
+      total: parseFloat(o.total),
+    }));
+    res.json(parsedOrders);
+  } catch (e) {
+    console.error("❌ [GET /api/orders/history] Erro:", e);
+    res.status(500).json({
+      error: "Erro ao buscar histórico de pedidos",
+      message: e.message,
+    });
+  }
+});
+
 // Verificar se pedido existe (útil para debug)
 app.get("/api/orders/:id", async (req, res) => {
   try {
@@ -3659,37 +3688,6 @@ app.get("/api/super-admin/sales-history", async (req, res) => {
 });
 
 // Endpoint para buscar todos os pedidos
-// Endpoint para histórico de pedidos com filtros de data
-app.get("/api/orders/history", async (req, res) => {
-  try {
-    console.log(
-      "📋 [GET /api/orders/history] Buscando histórico de pedidos...",
-    );
-    const { start, end } = req.query;
-    let query = db("orders").orderBy("timestamp", "desc");
-    if (start) query = query.where("timestamp", ">=", start);
-    if (end) query = query.where("timestamp", "<=", end);
-    const orders = await query;
-    console.log(
-      `📋 [GET /api/orders/history] Encontrados ${orders.length} pedidos`,
-    );
-    const parsedOrders = orders.map((o) => ({
-      ...o,
-      items: typeof o.items === "string" ? JSON.parse(o.items) : o.items,
-      total: parseFloat(o.total),
-    }));
-    res.json(parsedOrders);
-  } catch (e) {
-    console.error("❌ [GET /api/orders/history] Erro:", e);
-    res
-      .status(500)
-      .json({
-        error: "Erro ao buscar histórico de pedidos",
-        message: e.message,
-      });
-  }
-});
-
 app.get("/api/orders", async (req, res) => {
   try {
     const orders = await db("orders").orderBy("timestamp", "desc");
