@@ -6,6 +6,7 @@ import OpenAI from "openai";
 import knex from "knex";
 import jwt from "jsonwebtoken";
 import { createClient } from "redis";
+import { MercadoPagoConfig, Payment, Preference } from "mercadopago";
 import paymentRoutes from "./routes/payment.js";
 import * as paymentService from "./services/paymentService.js";
 
@@ -149,6 +150,24 @@ const KITCHEN_PASSWORD = process.env.KITCHEN_PASSWORD;
 const SUPER_ADMIN_PASSWORD = process.env.SUPER_ADMIN_PASSWORD;
 const JWT_SECRET = process.env.JWT_SECRET;
 const REDIS_URL = process.env.REDIS_URL;
+
+// Inicializa SDK do Mercado Pago
+let mercadopago = null;
+let paymentClient = null;
+let preferenceClient = null;
+
+if (MP_ACCESS_TOKEN) {
+  const client = new MercadoPagoConfig({
+    accessToken: MP_ACCESS_TOKEN,
+    options: { timeout: 5000 },
+  });
+  mercadopago = client;
+  paymentClient = new Payment(client);
+  preferenceClient = new Preference(client);
+  console.log("✅ SDK MercadoPago inicializado com sucesso!");
+} else {
+  console.warn("⚠️ MP_ACCESS_TOKEN não configurado - SDK desabilitado");
+}
 
 // --- Banco de Dados ---
 const dbConfig = process.env.DATABASE_URL
@@ -3830,6 +3849,221 @@ app.get("/api/orders", async (req, res) => {
 //     });
 //   }
 // });
+
+// ==========================================
+// PAGAMENTO ONLINE COM SDK MERCADO PAGO
+// ==========================================
+
+// Criar preferência de pagamento (Checkout Pro - redireciona para página do MP)
+app.post("/api/payment-online/create-preference", async (req, res) => {
+  try {
+    if (!preferenceClient) {
+      return res.status(503).json({
+        error: "SDK MercadoPago não configurado",
+      });
+    }
+
+    const { items, orderId, payerEmail, payerName } = req.body;
+
+    if (!items || items.length === 0) {
+      return res.status(400).json({ error: "Items são obrigatórios" });
+    }
+
+    // Calcula o total
+    const total = items.reduce(
+      (sum, item) => sum + item.price * item.quantity,
+      0,
+    );
+
+    console.log(
+      `💳 [ONLINE] Criando preferência de pagamento: R$ ${total.toFixed(2)}`,
+    );
+
+    const preference = await preferenceClient.create({
+      body: {
+        items: items.map((item) => ({
+          title: item.name,
+          quantity: item.quantity,
+          unit_price: item.price,
+          currency_id: "BRL",
+        })),
+        payer: {
+          email: payerEmail || "cliente@primeplush.com",
+          name: payerName || "Cliente",
+        },
+        external_reference: orderId,
+        back_urls: {
+          success: `${process.env.FRONTEND_URL || "http://localhost:3000"}/payment-success`,
+          failure: `${process.env.FRONTEND_URL || "http://localhost:3000"}/payment-failure`,
+          pending: `${process.env.FRONTEND_URL || "http://localhost:3000"}/payment-pending`,
+        },
+        auto_return: "approved",
+        notification_url: `${process.env.BACKEND_URL || "https://backendprimeplush.onrender.com"}/api/webhooks/mercadopago`,
+      },
+    });
+
+    console.log(`✅ Preferência criada: ${preference.id}`);
+
+    res.json({
+      preferenceId: preference.id,
+      initPoint: preference.init_point,
+      sandboxInitPoint: preference.sandbox_init_point,
+    });
+  } catch (error) {
+    console.error("❌ Erro ao criar preferência:", error);
+    res.status(500).json({
+      error: "Erro ao criar preferência de pagamento",
+      message: error.message,
+    });
+  }
+});
+
+// Criar pagamento PIX direto (retorna QR Code)
+app.post("/api/payment-online/create-pix-direct", async (req, res) => {
+  try {
+    if (!paymentClient) {
+      return res.status(503).json({
+        error: "SDK MercadoPago não configurado",
+      });
+    }
+
+    const { amount, description, orderId, payerEmail } = req.body;
+
+    if (!amount || amount <= 0) {
+      return res.status(400).json({ error: "Valor inválido" });
+    }
+
+    console.log(`💚 [PIX ONLINE] Gerando QR Code: R$ ${amount.toFixed(2)}`);
+
+    const payment = await paymentClient.create({
+      body: {
+        transaction_amount: parseFloat(amount),
+        description: description || `Pedido ${orderId}`,
+        payment_method_id: "pix",
+        payer: {
+          email: payerEmail || "cliente@primeplush.com",
+        },
+        external_reference: orderId,
+        notification_url: `${process.env.BACKEND_URL || "https://backendprimeplush.onrender.com"}/api/webhooks/mercadopago`,
+      },
+    });
+
+    console.log(`✅ PIX criado: ${payment.id}`);
+
+    res.json({
+      paymentId: payment.id,
+      status: payment.status,
+      qrCode: payment.point_of_interaction?.transaction_data?.qr_code,
+      qrCodeBase64:
+        payment.point_of_interaction?.transaction_data?.qr_code_base64,
+      ticketUrl: payment.point_of_interaction?.transaction_data?.ticket_url,
+    });
+  } catch (error) {
+    console.error("❌ Erro ao criar PIX:", error);
+    res.status(500).json({
+      error: "Erro ao criar pagamento PIX",
+      message: error.message,
+    });
+  }
+});
+
+// Criar pagamento com cartão de crédito (necessita token do cartão do frontend)
+app.post("/api/payment-online/create-card-payment", async (req, res) => {
+  try {
+    if (!paymentClient) {
+      return res.status(503).json({
+        error: "SDK MercadoPago não configurado",
+      });
+    }
+
+    const {
+      token,
+      amount,
+      description,
+      orderId,
+      installments,
+      payerEmail,
+      issuerId,
+      paymentMethodId,
+    } = req.body;
+
+    if (!token || !amount) {
+      return res.status(400).json({ error: "Token e valor são obrigatórios" });
+    }
+
+    console.log(
+      `💳 [CARD ONLINE] Processando pagamento: R$ ${amount.toFixed(2)}`,
+    );
+
+    const payment = await paymentClient.create({
+      body: {
+        transaction_amount: parseFloat(amount),
+        token: token,
+        description: description || `Pedido ${orderId}`,
+        installments: parseInt(installments) || 1,
+        payment_method_id: paymentMethodId || "visa",
+        issuer_id: issuerId,
+        payer: {
+          email: payerEmail || "cliente@primeplush.com",
+        },
+        external_reference: orderId,
+        notification_url: `${process.env.BACKEND_URL || "https://backendprimeplush.onrender.com"}/api/webhooks/mercadopago`,
+      },
+    });
+
+    console.log(`✅ Pagamento cartão criado: ${payment.id}`);
+    console.log(`   Status: ${payment.status}`);
+    console.log(`   Status Detail: ${payment.status_detail}`);
+
+    res.json({
+      paymentId: payment.id,
+      status: payment.status,
+      statusDetail: payment.status_detail,
+      approved: payment.status === "approved",
+    });
+  } catch (error) {
+    console.error("❌ Erro ao processar pagamento:", error);
+    res.status(500).json({
+      error: "Erro ao processar pagamento com cartão",
+      message: error.message,
+    });
+  }
+});
+
+// Verificar status de pagamento (qualquer tipo)
+app.get("/api/payment-online/status/:paymentId", async (req, res) => {
+  try {
+    if (!paymentClient) {
+      return res.status(503).json({
+        error: "SDK MercadoPago não configurado",
+      });
+    }
+
+    const { paymentId } = req.params;
+
+    console.log(`🔍 [STATUS ONLINE] Verificando: ${paymentId}`);
+
+    const payment = await paymentClient.get({ id: paymentId });
+
+    console.log(`   Status: ${payment.status}`);
+
+    res.json({
+      paymentId: payment.id,
+      status: payment.status,
+      statusDetail: payment.status_detail,
+      approved: payment.status === "approved",
+      externalReference: payment.external_reference,
+    });
+  } catch (error) {
+    console.error("❌ Erro ao verificar status:", error);
+    res.status(500).json({
+      error: "Erro ao verificar status do pagamento",
+      message: error.message,
+    });
+  }
+});
+
+// ==========================================
 
 // --- Inicialização ---
 console.log("🚀 Iniciando servidor...");
