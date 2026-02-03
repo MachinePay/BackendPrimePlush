@@ -36,32 +36,102 @@ app.get("/api/super-admin/receivables", async (req, res) => {
       });
     }
 
-    // Total de pedidos pagos
-    const paidOrders = await db("orders")
-      .whereIn("paymentStatus", ["paid", "authorized"])
-      .count("id as count")
-      .first();
-    // Valor total recebido
-    const totalReceived = await db("orders")
+    // Total de pedidos pagos (valor bruto acumulado)
+    const totalPaidOrders = await db("orders")
       .whereIn("paymentStatus", ["paid", "authorized"])
       .sum("total as total")
       .first();
-    // Data do último recebimento
-    const lastReceived = await db("orders")
-      .whereIn("paymentStatus", ["paid", "authorized"])
-      .max("timestamp as last")
+
+    // Total já recebido anteriormente
+    const totalAlreadyReceived = await db("super_admin_receivables")
+      .sum("amount as total")
       .first();
+
+    const totalReceived = parseFloat(totalPaidOrders.total) || 0;
+    const alreadyReceived = parseFloat(totalAlreadyReceived.total) || 0;
+    const toReceive = totalReceived - alreadyReceived;
+
+    // Histórico de recebimentos
+    const history = await db("super_admin_receivables")
+      .select("*")
+      .orderBy("received_at", "desc")
+      .limit(20);
 
     res.json({
       success: true,
-      total_paid_orders: Number(paidOrders.count) || 0,
-      total_received: parseFloat(totalReceived.total) || 0,
-      last_received_at: lastReceived.last || null,
+      stats: {
+        totalToReceive: Math.max(0, toReceive),
+        totalReceived: totalReceived,
+        alreadyReceived: alreadyReceived,
+      },
+      history: history.map((h) => ({
+        id: h.id,
+        amount: parseFloat(h.amount),
+        date: h.received_at,
+      })),
     });
   } catch (error) {
     console.error("❌ Erro no endpoint receivables:", error);
     res.status(500).json({
       error: "Erro ao buscar valores a receber",
+      message: error.message,
+    });
+  }
+});
+
+// Endpoint para marcar valores como recebidos
+app.post("/api/super-admin/receivables/mark-received", async (req, res) => {
+  try {
+    const superAdminPassword = req.headers["x-super-admin-password"];
+    if (!SUPER_ADMIN_PASSWORD) {
+      return res.status(503).json({
+        error: "Super Admin não configurado.",
+      });
+    }
+    if (superAdminPassword !== SUPER_ADMIN_PASSWORD) {
+      return res.status(401).json({
+        error: "Acesso negado. Senha de Super Admin inválida.",
+      });
+    }
+
+    // Calcula quanto tem a receber agora
+    const totalPaidOrders = await db("orders")
+      .whereIn("paymentStatus", ["paid", "authorized"])
+      .sum("total as total")
+      .first();
+
+    const totalAlreadyReceived = await db("super_admin_receivables")
+      .sum("amount as total")
+      .first();
+
+    const totalReceived = parseFloat(totalPaidOrders.total) || 0;
+    const alreadyReceived = parseFloat(totalAlreadyReceived.total) || 0;
+    const toReceive = totalReceived - alreadyReceived;
+
+    if (toReceive <= 0) {
+      return res.status(400).json({
+        error: "Não há valores a receber no momento",
+      });
+    }
+
+    // Registra o recebimento
+    await db("super_admin_receivables").insert({
+      amount: toReceive,
+    });
+
+    console.log(
+      `✅ Super Admin marcou R$ ${toReceive.toFixed(2)} como recebido`,
+    );
+
+    res.json({
+      success: true,
+      message: "Recebimento registrado com sucesso",
+      amount: toReceive,
+    });
+  } catch (error) {
+    console.error("❌ Erro ao marcar como recebido:", error);
+    res.status(500).json({
+      error: "Erro ao registrar recebimento",
       message: error.message,
     });
   }
@@ -242,6 +312,17 @@ async function initDatabase() {
     }
   }
   console.log("⏳ Verificando tabelas...");
+
+  // ========== TABELA DE RECEBIMENTOS DO SUPER ADMIN ==========
+  const hasReceivables = await db.schema.hasTable("super_admin_receivables");
+  if (!hasReceivables) {
+    await db.schema.createTable("super_admin_receivables", (table) => {
+      table.increments("id").primary();
+      table.decimal("amount", 10, 2).notNullable();
+      table.timestamp("received_at").defaultTo(db.fn.now());
+    });
+    console.log("✅ Tabela 'super_admin_receivables' criada com sucesso");
+  }
 
   const hasProducts = await db.schema.hasTable("products");
   if (!hasProducts) {
