@@ -1,4 +1,3 @@
-
 import express from "express";
 import fs from "fs/promises";
 import path from "path";
@@ -224,6 +223,24 @@ setInterval(() => {
 
 // --- Inicialização do Banco (SEED) ---
 async function initDatabase() {
+  // Adiciona colunas extras para pagamento se não existirem
+  const paymentCols = [
+    { name: "paymentType", type: "string" },
+    { name: "paymentMethod", type: "string" },
+    { name: "installments", type: "integer" },
+    { name: "fee", type: "decimal" },
+  ];
+  for (const col of paymentCols) {
+    const hasCol = await db.schema.hasColumn("orders", col.name);
+    if (!hasCol) {
+      await db.schema.table("orders", (table) => {
+        if (col.type === "string") table.string(col.name);
+        if (col.type === "integer") table.integer(col.name);
+        if (col.type === "decimal") table.decimal(col.name, 8, 2);
+      });
+      console.log(`✅ Coluna '${col.name}' adicionada à tabela orders`);
+    }
+  }
   console.log("⏳ Verificando tabelas...");
 
   const hasProducts = await db.schema.hasTable("products");
@@ -1079,7 +1096,18 @@ app.get(
 );
 
 app.post("/api/orders", async (req, res) => {
-  const { userId, userName, items, total, paymentId, observation } = req.body;
+  const {
+    userId,
+    userName,
+    items,
+    total,
+    paymentId,
+    observation,
+    paymentType,
+    paymentMethod,
+    installments,
+    fee,
+  } = req.body;
   console.log(
     `📥 [POST /api/orders] Nova ordem recebida para usuário: ${userId}`,
   );
@@ -1095,6 +1123,10 @@ app.post("/api/orders", async (req, res) => {
     status: paymentId ? "active" : "pending_payment",
     paymentStatus: paymentId ? "paid" : "pending",
     paymentId: paymentId || null,
+    paymentType: paymentType || null,
+    paymentMethod: paymentMethod || null,
+    installments: installments || null,
+    fee: fee || null,
   };
 
   console.log(`📦 Criando pedido ${newOrder.id}`);
