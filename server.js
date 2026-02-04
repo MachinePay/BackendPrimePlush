@@ -3898,9 +3898,9 @@ app.post("/api/payment-online/create-preference", async (req, res) => {
         },
         external_reference: orderId,
         back_urls: {
-          success: `${process.env.FRONTEND_URL || "http://localhost:3000"}/payment-success`,
-          failure: `${process.env.FRONTEND_URL || "http://localhost:3000"}/payment-failure`,
-          pending: `${process.env.FRONTEND_URL || "http://localhost:3000"}/payment-pending`,
+          success: `${process.env.FRONTEND_URL || "https://primeplush.com.br"}/payment-success`,
+          failure: `${process.env.FRONTEND_URL || "https://primeplush.com.br"}/payment-failure`,
+          pending: `${process.env.FRONTEND_URL || "https://primeplush.com.br"}/payment-pending`,
         },
         auto_return: "approved",
         notification_url: `${process.env.BACKEND_URL || "https://backendprimeplush.onrender.com"}/api/webhooks/mercadopago`,
