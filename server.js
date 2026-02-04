@@ -16,7 +16,11 @@ const PORT = process.env.PORT || 3001;
 // Configuração CORS para permitir frontend local e produção
 app.use(
   cors({
-    origin: ["http://localhost:3000", "https://primeplush.vercel.app"],
+    origin: [
+      "http://localhost:3000",
+      "https://primeplush.vercel.app",
+      "https://primeplush.com.br",
+    ],
     credentials: true,
   }),
 );
@@ -529,6 +533,7 @@ async function initDatabase() {
 
 const allowedOrigins = [
   "http://localhost:3000",
+  "https://primeplush.com.br",
   process.env.FRONTEND_URL,
 ].filter(Boolean);
 
