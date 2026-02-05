@@ -11,11 +11,7 @@ export async function createPix(req, res) {
     if (!amount) {
       return res.status(400).json({ error: "Campo amount é obrigatório" });
     }
-    if (paymentType === "online") {
-      return res
-        .status(400)
-        .json({ error: "Pagamento online estará disponível em breve." });
-    }
+    // Permitir pagamentos online
     // Default: presencial
     const result = await paymentService.createPixPayment(
       { amount, description, orderId, email, payerName },
@@ -40,11 +36,7 @@ export async function createCard(req, res) {
     if (!amount) {
       return res.status(400).json({ error: "Campo amount é obrigatório" });
     }
-    if (paymentType === "online") {
-      return res
-        .status(400)
-        .json({ error: "Pagamento online estará disponível em breve." });
-    }
+    // Permitir pagamentos online
     if (!req.store.mp_device_id) {
       return res
         .status(400)
