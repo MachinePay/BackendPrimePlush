@@ -1,3 +1,10 @@
+import express from "express";
+import fs from "fs/promises";
+import path from "path";
+import cors from "cors";
+import OpenAI from "openai";
+// ...existing code...
+
 // Endpoint PIX Digital para integração frontend (padrão Mercado Pago)
 app.post("/api/payment/pix-digital", async (req, res) => {
   const { amount, description, email } = req.body;
