@@ -1513,7 +1513,9 @@ app.get("/api/user-orders", async (req, res) => {
     const { userId } = req.query;
     console.log(`📋 [GET /api/user-orders] userId: ${userId}`);
 
-    let query = db("orders").orderBy("timestamp", "desc");
+    let query = db("orders")
+      .whereIn("paymentStatus", ["paid", "authorized"])
+      .orderBy("timestamp", "desc");
     if (userId) {
       query = query.where({ userId });
     }
@@ -1542,7 +1544,9 @@ app.get("/api/orders/history", async (req, res) => {
       "📋 [GET /api/orders/history] Buscando histórico de pedidos...",
     );
     const { start, end } = req.query;
-    let query = db("orders").orderBy("timestamp", "desc");
+    let query = db("orders")
+      .whereIn("paymentStatus", ["paid", "authorized"])
+      .orderBy("timestamp", "desc");
     if (start) query = query.where("timestamp", ">=", start);
     if (end) query = query.where("timestamp", "<=", end);
     const orders = await query;
