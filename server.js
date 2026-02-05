@@ -1,3 +1,19 @@
+import express from "express";
+import fs from "fs/promises";
+import path from "path";
+import cors from "cors";
+import OpenAI from "openai";
+import knex from "knex";
+import jwt from "jsonwebtoken";
+import { createClient } from "redis";
+import { MercadoPagoConfig, Payment, Preference } from "mercadopago";
+import paymentRoutes from "./routes/payment.js";
+import * as paymentService from "./services/paymentService.js";
+
+const app = express();
+const PORT = process.env.PORT || 3001;
+
+// ...existing code...
 
 // Endpoint PIX Digital para integração frontend (padrão Mercado Pago)
 app.post("/api/payment/pix-digital", async (req, res) => {
