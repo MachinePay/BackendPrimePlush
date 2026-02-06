@@ -2026,7 +2026,13 @@ app.post("/api/webhooks/mercadopago", async (req, res) => {
                 }
               }
 
-              console.log(`🎉 Estoque atualizado com sucesso!`);
+              // Atualiza o pedido para pago e ativo
+              await db("orders").where({ id: externalRef }).update({
+                paymentStatus: "paid",
+                status: "active",
+              });
+
+              console.log(`🎉 Estoque atualizado com sucesso e pedido marcado como pago!`);
             } else {
               console.log(`⚠️ Pedido ${externalRef} não encontrado no banco`);
             }
