@@ -1818,7 +1818,7 @@ app.post("/api/notifications/mercadopago", async (req, res) => {
             // Remove do cache se existir
             const amountInCents = Math.round(payment.transaction_amount * 100);
             const cacheKey = `amount_${amountInCents}`;
-            paymentCache.delete(cacheKey);
+            await deleteCachedPayment(cacheKey);
             console.log(`🧹 Cache limpo para ${cacheKey}`);
           } else {
             console.log(
@@ -2051,7 +2051,7 @@ app.post("/api/webhooks/mercadopago", async (req, res) => {
         // Remove do cache se existir
         const amountInCents = Math.round(payment.transaction_amount * 100);
         const cacheKey = `amount_${amountInCents}`;
-        paymentCache.delete(cacheKey);
+        await deleteCachedPayment(cacheKey);
         console.log(`🧹 Cache limpo para ${cacheKey}`);
       } else {
         console.log(
