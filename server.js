@@ -1,3 +1,6 @@
+// Importa e usa o router do superadmin
+import superadminRoutes from "./routes/superadmin.js";
+app.use("/api", superadminRoutes);
 import express from "express";
 import fs from "fs/promises";
 import path from "path";
