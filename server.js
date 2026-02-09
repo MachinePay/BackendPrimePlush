@@ -1300,72 +1300,26 @@ app.post("/api/orders", async (req, res) => {
       });
     }
 
-    // ✅ RESERVA ESTOQUE AQUI (ANTES de inserir o pedido)
-    console.log(`🔒 Reservando estoque de ${items.length} produto(s)...`);
 
+    // Checagem simples de estoque suficiente (sem reservar)
     for (const item of items) {
-      // Busca produto pelo id (single-tenant)
       const product = await db("products").where({ id: item.id }).first();
-
       if (!product) {
         console.warn(`⚠️ Produto ${item.id} não encontrado no estoque!`);
         continue;
       }
-
-      // Se stock é null = ilimitado, não precisa reservar
-      if (product.stock === null) {
-        console.log(`  ℹ️ ${item.name}: estoque ilimitado`);
-        continue;
-      }
-
-      // Calcula estoque disponível (total - reservado)
-      const stockAvailable = product.stock - (product.stock_reserved || 0);
-
-      // Verifica se tem estoque disponível suficiente
-      if (stockAvailable < item.quantity) {
+      if (product.stock !== null && product.stock < item.quantity) {
         throw new Error(
-          `Estoque insuficiente para ${item.name}. Disponível: ${stockAvailable}, Solicitado: ${item.quantity}`,
+          `Estoque insuficiente para ${item.name}. Disponível: ${product.stock}, Solicitado: ${item.quantity}`
         );
       }
-
-      // Aumenta a RESERVA (não deduz ainda)
-      const newReserved = (product.stock_reserved || 0) + item.quantity;
-
-      await db("products")
-        .where({ id: item.id })
-        .update({ stock_reserved: newReserved });
-
-      console.log(
-        `  🔒 ${item.name}: reserva ${
-          product.stock_reserved || 0
-        } → ${newReserved} (+${item.quantity})`,
-      );
     }
-
-    console.log(`✅ Estoque reservado com sucesso!`);
 
     // Salva o pedido
     await db("orders").insert(newOrder);
 
-    // Após salvar, desconta o estoque real e ajusta a reserva
-    for (const item of items) {
-      // Busca produto atualizado
-      const product = await db("products").where({ id: item.id }).first();
-      if (!product) continue;
-      // Calcula novo estoque e nova reserva
-      const novoStock = Math.max(0, (product.stock || 0) - item.quantity);
-      const novoReserved = Math.max(0, (product.stock_reserved || 0) - item.quantity);
-      await db("products")
-        .where({ id: item.id })
-        .update({
-          stock: novoStock,
-          stock_reserved: novoReserved
-        });
-      console.log(`  📦 ${item.name}: estoque ${product.stock} → ${novoStock}, reserva ${product.stock_reserved} → ${novoReserved}`);
-    }
-
+    // Não desconta estoque nem ajusta reserva aqui!
     console.log(`✅ Pedido ${newOrder.id} criado com sucesso!`);
-
     res.status(201).json({ ...newOrder, items: items || [] });
   } catch (e) {
     console.error("❌ Erro ao salvar pedido:", e);
