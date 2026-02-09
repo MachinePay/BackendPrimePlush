@@ -11,20 +11,21 @@ export function generateStyledOrderPdf(order, res) {
   // Centralizar logo acima do título
   const logoPath = path.join(process.cwd(), "public", "logo.png");
   let logoHeight = 0;
+  let y = 30;
   if (fs.existsSync(logoPath)) {
-    // Centralizar horizontalmente
     const logoWidth = 120;
     logoHeight = 70;
     const pageWidth = doc.page.width;
     const xLogo = (pageWidth - logoWidth) / 2;
-    doc.image(logoPath, xLogo, 30, { width: logoWidth });
+    doc.image(logoPath, xLogo, y, { width: logoWidth });
+    y += logoHeight + 10;
   }
-  // Cabeçalho ajustado para ficar abaixo da logo
-  const headerY = 30 + logoHeight + 10;
+  // Título
   doc
     .fontSize(16)
     .font("Helvetica-Bold")
-    .text("PEDIDO (entre em contato para cotar seu frete 11942058445)", 0, headerY, { align: "center" });
+    .text("PEDIDO (entre em contato para cotar seu frete 11942058445)", 0, y, { align: "center" });
+  y += 30;
 
   // Dados do cliente (usando campos reais do pedido)
   // Busca nome, email, telefone, endereço, cep
@@ -33,17 +34,27 @@ export function generateStyledOrderPdf(order, res) {
   const telefoneCliente = order.phone || order.telefone || order.customerPhone || order.userPhone || "-";
   const enderecoCliente = order.address || order.endereco || order.customerAddress || order.userAddress || "-";
   const cepCliente = order.cep || order.zip || order.customerCep || order.userCep || "-";
-  const dadosY = headerY + 30;
   doc
     .fontSize(10)
     .font("Helvetica-Bold")
-    .text("DADOS DO CLIENTE", 40, dadosY)
+    .text("DADOS DO CLIENTE", 40, y)
     .font("Helvetica")
-    .text(`Nome: ${nomeCliente}`)
-    .text(`Telefone: ${telefoneCliente}`)
-    .text(`E-mail: ${emailCliente}`)
-    .text(`Endereço: ${enderecoCliente}`)
-    .text(`CEP: ${cepCliente}`);
+    .text(`Nome: ${nomeCliente}`, 40, y + 15)
+    .text(`Telefone: ${telefoneCliente}`, 40, y + 30)
+    .text(`E-mail: ${emailCliente}`, 40, y + 45)
+    .text(`Endereço: ${enderecoCliente}`, 40, y + 60)
+    .text(`CEP: ${cepCliente}`, 40, y + 75);
+  // Forma de pagamento e peso
+  doc
+    .font("Helvetica-Bold")
+    .text("FORMA DE PAGAMENTO", 350, y)
+    .font("Helvetica")
+    .text(order.paymentType || order.payment_method || order.payment_method_id || order.paymentStatus || "-", 350, y + 15)
+    .font("Helvetica-Bold")
+    .text("PESO ESTIMADO", 350, y + 40)
+    .font("Helvetica")
+    .text(order.estimatedWeight || "-", 350, y + 55);
+  y += 95;
   // Forma de pagamento e peso
   doc
     .font("Helvetica-Bold")
@@ -56,23 +67,21 @@ export function generateStyledOrderPdf(order, res) {
     .text(order.estimatedWeight || "-", 350, 165);
 
   // Tabela de produtos
-  doc.moveDown().font("Helvetica-Bold").text("PRODUTOS", 40, 200);
-  const tableTop = 220;
+  doc.font("Helvetica-Bold").text("PRODUTOS", 40, y);
+  y += 20;
   doc
     .fontSize(10)
     .font("Helvetica-Bold")
-    .text("Produto", 40, tableTop)
-    .text("Qtd", 200, tableTop)
-    .text("Valor Unit.", 250, tableTop)
-    .text("Subtotal", 350, tableTop);
-
-  // Linhas da tabela (usando estrutura real do pedido)
-  // Se não encontrar nome do produto, busca no menu.json
+    .text("Produto", 40, y)
+    .text("Qtd", 200, y)
+    .text("Valor Unit.", 250, y)
+    .text("Subtotal", 350, y);
+  y += 20;
+  // Busca produtos comprados
   let menu = [];
   try {
     menu = JSON.parse(fs.readFileSync(path.join(process.cwd(), "data", "menu.json"), "utf8"));
   } catch {}
-  let y = tableTop + 20;
   (order.items || []).forEach((item) => {
     let nome = item.name || item.produto || item.title || item.product || item.descricao || item.description;
     if (!nome && item.id && menu.length) {
@@ -92,25 +101,25 @@ export function generateStyledOrderPdf(order, res) {
   });
 
   // Total
+  y += 10;
   doc
     .font("Helvetica-Bold")
-    .text("TOTAL:", 250, y + 20)
-    .text(`R$ ${(order.total !== undefined ? order.total : order.valor_total || 0).toFixed(2)}`, 350, y + 20);
+    .text("TOTAL:", 250, y)
+    .text(`R$ ${(order.total !== undefined ? order.total : order.valor_total || 0).toFixed(2)}`, 350, y);
+  y += 30;
 
   // Observações
   doc
     .font("Helvetica-Bold")
-    .text("OBSERVAÇÕES", 40, y + 60)
+    .text("OBSERVAÇÕES", 40, y)
     .font("Helvetica")
-    .text(order.observation || order.observacoes || order.observacao || "-", 40, y + 75, { width: 500 });
-
-  // Rodapé mais próximo do conteúdo
-  const rodapeY = y + 60;
+    .text(order.observation || order.observacoes || order.observacao || "-", 40, y + 15, { width: 500 });
+  y += 40;
   doc
     .fontSize(8)
     .font("Helvetica")
-    .text("CONTATO PARA CONFIRMAR PEDIDO", 40, rodapeY)
-    .text("WhatsApp: (11) 94205-8445 | E-mail: orcamento@girakids.com", 40, rodapeY + 10);
+    .text("CONTATO PARA CONFIRMAR PEDIDO", 40, y)
+    .text("WhatsApp: (11) 94205-8445 | E-mail: orcamento@girakids.com", 40, y + 12);
 
   doc.end();
 }
