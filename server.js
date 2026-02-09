@@ -1271,6 +1271,9 @@ app.post("/api/orders", async (req, res) => {
     paymentId,
     observation,
     paymentType,
+    paymentMethod,
+    installments,
+    fee,
   } = req.body;
 
   try {
@@ -1313,13 +1316,13 @@ app.post("/api/orders", async (req, res) => {
         paymentStatus: "pending",
         paymentId: paymentId || null,
         paymentType: paymentType || null,
-        paymentMethod: null,
+        paymentMethod: paymentMethod || null,
         items: Array.isArray(items)
           ? JSON.stringify(items)
           : JSON.stringify([]),
         observation: observation || null,
-        installments: null,
-        fee: null,
+        installments: installments || null,
+        fee: fee || null,
         created_at: new Date(),
       };
 
