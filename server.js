@@ -493,14 +493,18 @@ async function initDatabase() {
         return res.status(404).json({ error: "Pedido não encontrado" });
       }
       // Buscar itens do pedido a partir da tabela order_products
-      const orderProducts = await db("order_products").where({ order_id: order.id });
+      const orderProducts = await db("order_products").where({
+        order_id: order.id,
+      });
       // Buscar dados dos produtos para cada item
       const items = [];
       for (const op of orderProducts) {
-        const product = await db("products").where({ id: op.product_id }).first();
+        const product = await db("products")
+          .where({ id: op.product_id })
+          .first();
         items.push({
           id: op.product_id,
-          name: product ? product.name : '-',
+          name: product ? product.name : "-",
           price: op.price,
           quantity: op.quantity,
         });
@@ -1272,7 +1276,6 @@ app.post("/api/orders", async (req, res) => {
   try {
     // Iniciamos uma transação para garantir integridade dos dados
     await db.transaction(async (trx) => {
-      
       // 1. Garante que o usuário existe
       const userExists = await trx("users").where({ id: userId }).first();
       if (!userExists) {
@@ -1294,20 +1297,29 @@ app.post("/api/orders", async (req, res) => {
         }
         if (product.stock !== null && product.stock < item.quantity) {
           throw new Error(
-            `Estoque insuficiente para ${item.name}. Disponível: ${product.stock}, Solicitado: ${item.quantity}`
+            `Estoque insuficiente para ${item.name}. Disponível: ${product.stock}, Solicitado: ${item.quantity}`,
           );
         }
       }
 
-      // 3. Define o objeto do pedido (estava faltando no seu código)
+      // 3. Define o objeto do pedido com nomes corretos das colunas
       const newOrder = {
-        id: `ORD-${Date.now()}`, // Exemplo de geração de ID
-        user_id: userId,
+        id: `order_${Date.now()}`,
+        userId: userId,
+        userName: userName || "Cliente",
         total: total,
-        payment_id: paymentId,
-        payment_type: paymentType,
-        observation: observation,
+        timestamp: new Date().toISOString(),
         status: "pending",
+        paymentStatus: "pending",
+        paymentId: paymentId || null,
+        paymentType: paymentType || null,
+        paymentMethod: null,
+        items: Array.isArray(items)
+          ? JSON.stringify(items)
+          : JSON.stringify([]),
+        observation: observation || null,
+        installments: null,
+        fee: null,
         created_at: new Date(),
       };
 
