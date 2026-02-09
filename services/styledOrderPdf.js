@@ -36,21 +36,32 @@ export function generateStyledOrderPdf(order, res) {
     order.customer ||
     "-";
   const emailCliente =
-    order.email || order.customerEmail || order.userEmail || "-";
+    order.email ||
+    order.customerEmail ||
+    order.userEmail ||
+    order.contactEmail ||
+    "-";
   const telefoneCliente =
     order.phone ||
     order.telefone ||
     order.customerPhone ||
     order.userPhone ||
+    order.contactPhone ||
     "-";
   const enderecoCliente =
     order.address ||
     order.endereco ||
     order.customerAddress ||
     order.userAddress ||
+    order.contactAddress ||
     "-";
   const cepCliente =
-    order.cep || order.zip || order.customerCep || order.userCep || "-";
+    order.cep ||
+    order.zip ||
+    order.customerCep ||
+    order.userCep ||
+    order.contactCep ||
+    "-";
   // Bloco lado a lado
   const leftX = 40;
   const rightX = 340;
@@ -79,11 +90,7 @@ export function generateStyledOrderPdf(order, res) {
         "-",
       rightX,
       blocoY + 18,
-    )
-    .font("Helvetica-Bold")
-    .text("PESO ESTIMADO", rightX, blocoY + 54)
-    .font("Helvetica")
-    .text(order.estimatedWeight || "-", rightX, blocoY + 72);
+    );
 
   y = blocoY + 110;
 
@@ -98,26 +105,16 @@ export function generateStyledOrderPdf(order, res) {
     .text("Valor Unit.", 250, y)
     .text("Subtotal", 350, y);
   y += 18;
-  // Busca produtos comprados
-  let menu = [];
-  try {
-    menu = JSON.parse(
-      fs.readFileSync(path.join(process.cwd(), "data", "menu.json"), "utf8"),
-    );
-  } catch {}
+  // Exibe produtos comprados
   (order.items || []).forEach((item) => {
-    let nome =
+    const nome =
       item.name ||
       item.produto ||
       item.title ||
       item.product ||
       item.descricao ||
-      item.description;
-    if (!nome && item.id && menu.length) {
-      const found = menu.find((prod) => prod.id === item.id);
-      if (found && found.name) nome = found.name;
-    }
-    if (!nome) nome = "-";
+      item.description ||
+      "-";
     const qtd = item.quantity || item.qtd || item.amount || 1;
     const valor =
       item.price !== undefined
@@ -160,12 +157,36 @@ export function generateStyledOrderPdf(order, res) {
       { width: 500 },
     );
   y += 44;
+
   doc
-    .fontSize(9)
+    .fontSize(12)
+    .font("Helvetica-Bold")
+    .text("FORMA DE PAGAMENTO", rightX, blocoY)
     .font("Helvetica")
-    .text("CONTATO PARA CONFIRMAR PEDIDO", 40, y)
-    .text(
-      "WhatsApp: (11) 94205-8445 | E-mail: orcamento@girakids.com",
+    .text(order.paymentType || order.payment_method || order.payment_method_id || order.paymentStatus || "-", rightX, blocoY + 18);
+
+  // Detalhes extra para pagamento presencial
+  if ((order.paymentType || order.payment_method || order.payment_method_id) === "presencial") {
+    const tipoPagamento = order.paymentMethod || order.payment_method || order.payment_method_id || "-";
+    const vezes = order.installments || order.parcelas || order.qtdParcelas || order.paymentInstallments || 1;
+    let tipoDesc = "";
+    if (typeof tipoPagamento === "string") {
+      if (tipoPagamento.toLowerCase().includes("pix")) tipoDesc = "PIX";
+      else if (tipoPagamento.toLowerCase().includes("debito")) tipoDesc = "Cartão Débito";
+      else if (tipoPagamento.toLowerCase().includes("credito")) tipoDesc = "Cartão Crédito";
+      else tipoDesc = tipoPagamento;
+    }
+    doc
+      .fontSize(11)
+      .font("Helvetica")
+      .text(`Tipo: ${tipoDesc}`, rightX, blocoY + 36);
+    if (vezes > 1) {
+      doc
+        .fontSize(11)
+        .font("Helvetica")
+        .text(`Parcelado: ${vezes}x`, rightX, blocoY + 54);
+    }
+  }
       40,
       y + 14,
     );
