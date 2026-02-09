@@ -34,27 +34,30 @@ export function generateStyledOrderPdf(order, res) {
   const telefoneCliente = order.phone || order.telefone || order.customerPhone || order.userPhone || "-";
   const enderecoCliente = order.address || order.endereco || order.customerAddress || order.userAddress || "-";
   const cepCliente = order.cep || order.zip || order.customerCep || order.userCep || "-";
+  // Bloco lado a lado: dados do cliente (esquerda) e pagamento (direita)
+  const leftX = 40;
+  const rightX = 340;
+  const blocoY = y;
   doc
     .fontSize(10)
     .font("Helvetica-Bold")
-    .text("DADOS DO CLIENTE", 40, y)
+    .text("DADOS DO CLIENTE", leftX, blocoY)
     .font("Helvetica")
-    .text(`Nome: ${nomeCliente}`, 40, y + 15)
-    .text(`Telefone: ${telefoneCliente}`, 40, y + 30)
-    .text(`E-mail: ${emailCliente}`, 40, y + 45)
-    .text(`Endereço: ${enderecoCliente}`, 40, y + 60)
-    .text(`CEP: ${cepCliente}`, 40, y + 75);
-  // Forma de pagamento e peso
+    .text(`Nome: ${nomeCliente}`, leftX, blocoY + 15)
+    .text(`Telefone: ${telefoneCliente}`, leftX, blocoY + 30)
+    .text(`E-mail: ${emailCliente}`, leftX, blocoY + 45)
+    .text(`Endereço: ${enderecoCliente}`, leftX, blocoY + 60)
+    .text(`CEP: ${cepCliente}`, leftX, blocoY + 75);
   doc
     .font("Helvetica-Bold")
-    .text("FORMA DE PAGAMENTO", 350, y)
+    .text("FORMA DE PAGAMENTO", rightX, blocoY)
     .font("Helvetica")
-    .text(order.paymentType || order.payment_method || order.payment_method_id || order.paymentStatus || "-", 350, y + 15)
+    .text(order.paymentType || order.payment_method || order.payment_method_id || order.paymentStatus || "-", rightX, blocoY + 15)
     .font("Helvetica-Bold")
-    .text("PESO ESTIMADO", 350, y + 40)
+    .text("PESO ESTIMADO", rightX, blocoY + 40)
     .font("Helvetica")
-    .text(order.estimatedWeight || "-", 350, y + 55);
-  y += 95;
+    .text(order.estimatedWeight || "-", rightX, blocoY + 55);
+  y = blocoY + 95;
   // Forma de pagamento e peso
   doc
     .font("Helvetica-Bold")
