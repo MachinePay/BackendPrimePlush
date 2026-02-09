@@ -492,7 +492,7 @@ async function initDatabase() {
       if (!order) {
         return res.status(404).json({ error: "Pedido não encontrado" });
       }
-      // Buscar itens do pedido, se necessário (ajuste conforme seu modelo)
+      // Buscar itens do pedido
       let items = [];
       if (order.items) {
         try {
@@ -502,10 +502,31 @@ async function initDatabase() {
         }
       }
       order.items = items;
+
+      // Buscar dados do usuário
+      let user = null;
+      if (order.userId) {
+        user = await db("users").where({ id: order.userId }).first();
+      }
+      if (user) {
+        order.userName = user.name || order.userName;
+        order.email = user.email || order.email;
+        order.cpf = user.cpf || order.cpf;
+        // Adicione outros campos conforme necessário (telefone, endereço, etc.)
+        // Exemplo:
+        order.phone = user.phone || order.phone;
+        order.address = user.address || order.address;
+        order.cep = user.cep || order.cep;
+      }
+
       // PDF estilizado
       res.setHeader("Content-Type", "application/pdf");
-      res.setHeader("Content-Disposition", `inline; filename=pedido-${order.id}.pdf`);
-      const { generateStyledOrderPdf } = await import("./services/styledOrderPdf.js");
+      res.setHeader(
+        "Content-Disposition",
+        `inline; filename=pedido-${order.id}.pdf`,
+      );
+      const { generateStyledOrderPdf } =
+        await import("./services/styledOrderPdf.js");
       generateStyledOrderPdf(order, res);
     } catch (error) {
       console.error("Erro ao gerar PDF do pedido:", error);
@@ -1284,7 +1305,6 @@ app.post("/api/orders", async (req, res) => {
       });
     }
 
-
     // Checagem simples de estoque suficiente (sem reservar)
     for (const item of items) {
       const product = await db("products").where({ id: item.id }).first();
@@ -1294,7 +1314,7 @@ app.post("/api/orders", async (req, res) => {
       }
       if (product.stock !== null && product.stock < item.quantity) {
         throw new Error(
-          `Estoque insuficiente para ${item.name}. Disponível: ${product.stock}, Solicitado: ${item.quantity}`
+          `Estoque insuficiente para ${item.name}. Disponível: ${product.stock}, Solicitado: ${item.quantity}`,
         );
       }
     }
@@ -1705,12 +1725,14 @@ app.post("/api/notifications/mercadopago", async (req, res) => {
               try {
                 const order = await db("orders").where({ id: orderId }).first();
                 if (order && order.paymentStatus === "pending") {
-                  await db("orders").where({ id: orderId }).update({
-                    paymentStatus: "paid",
-                    status: "preparing",
-                    paymentType: "online",
-                    paymentMethod: payment.payment_method_id || "unknown",
-                  });
+                  await db("orders")
+                    .where({ id: orderId })
+                    .update({
+                      paymentStatus: "paid",
+                      status: "preparing",
+                      paymentType: "online",
+                      paymentMethod: payment.payment_method_id || "unknown",
+                    });
                   console.log(
                     `✅ Pedido ${orderId} marcado como PAGO via IPN Card`,
                   );
@@ -1932,10 +1954,9 @@ app.post("/api/notifications/mercadopago", async (req, res) => {
 
 // Endpoint teste para validar IPN
 app.get("/api/notifications/mercadopago", (req, res) => {
-
   res.json({
     status: "ready",
-    message: "IPN endpoint pronto"
+    message: "IPN endpoint pronto",
   });
 });
 
@@ -2034,12 +2055,14 @@ app.post("/api/webhooks/mercadopago", async (req, res) => {
               }
 
               // Atualiza o pedido para pago e ativo, salvando forma de pagamento
-              await db("orders").where({ id: externalRef }).update({
-                paymentStatus: "paid",
-                status: "active",
-                paymentType: "online",
-                paymentMethod: payment.payment_method_id || "unknown",
-              });
+              await db("orders")
+                .where({ id: externalRef })
+                .update({
+                  paymentStatus: "paid",
+                  status: "active",
+                  paymentType: "online",
+                  paymentMethod: payment.payment_method_id || "unknown",
+                });
               // Envia PDF por email para o cliente, se houver email
               if (order.email) {
                 try {
@@ -2050,7 +2073,9 @@ app.post("/api/webhooks/mercadopago", async (req, res) => {
                 }
               }
 
-              console.log(`🎉 Estoque atualizado com sucesso e pedido marcado como pago!`);
+              console.log(
+                `🎉 Estoque atualizado com sucesso e pedido marcado como pago!`,
+              );
             } else {
               console.log(`⚠️ Pedido ${externalRef} não encontrado no banco`);
             }
