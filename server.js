@@ -1,5 +1,5 @@
 // Importa e usa o router do superadmin
-import superadminRoutes from "./routes/superadmin.js";
+const superadminRoutes = require("./routes/superadmin.js");
 app.use("/api", superadminRoutes);
 import express from "express";
 import fs from "fs/promises";
