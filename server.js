@@ -1704,6 +1704,8 @@ app.post("/api/notifications/mercadopago", async (req, res) => {
                   await db("orders").where({ id: orderId }).update({
                     paymentStatus: "paid",
                     status: "preparing",
+                    paymentType: "online",
+                    paymentMethod: payment.payment_method_id || "unknown",
                   });
                   console.log(
                     `✅ Pedido ${orderId} marcado como PAGO via IPN Card`,
@@ -2026,10 +2028,12 @@ app.post("/api/webhooks/mercadopago", async (req, res) => {
                 }
               }
 
-              // Atualiza o pedido para pago e ativo
+              // Atualiza o pedido para pago e ativo, salvando forma de pagamento
               await db("orders").where({ id: externalRef }).update({
                 paymentStatus: "paid",
                 status: "active",
+                paymentType: "online",
+                paymentMethod: payment.payment_method_id || "unknown",
               });
 
               console.log(`🎉 Estoque atualizado com sucesso e pedido marcado como pago!`);
