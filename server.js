@@ -1,3 +1,4 @@
+// ...existing code...
 // Endpoint detalhado para SuperAdmin: stats, pedidos pagos, taxas, etc
 app.get("/api/super-admin/receivables", async (req, res) => {
   try {
