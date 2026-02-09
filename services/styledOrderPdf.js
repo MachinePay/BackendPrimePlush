@@ -158,22 +158,29 @@ export function generateStyledOrderPdf(order, res) {
     );
   y += 44;
 
-  doc
-    .fontSize(12)
-    .font("Helvetica-Bold")
-    .text("FORMA DE PAGAMENTO", rightX, blocoY)
-    .font("Helvetica")
-    .text(order.paymentType || order.payment_method || order.payment_method_id || order.paymentStatus || "-", rightX, blocoY + 18);
-
-  // Detalhes extra para pagamento presencial
-  if ((order.paymentType || order.payment_method || order.payment_method_id) === "presencial") {
-    const tipoPagamento = order.paymentMethod || order.payment_method || order.payment_method_id || "-";
-    const vezes = order.installments || order.parcelas || order.qtdParcelas || order.paymentInstallments || 1;
+  // Detalhes extra para pagamento presencial (apenas uma vez)
+  if (
+    (order.paymentType || order.payment_method || order.payment_method_id) ===
+    "presencial"
+  ) {
+    const tipoPagamento =
+      order.paymentMethod ||
+      order.payment_method ||
+      order.payment_method_id ||
+      "-";
+    const vezes =
+      order.installments ||
+      order.parcelas ||
+      order.qtdParcelas ||
+      order.paymentInstallments ||
+      1;
     let tipoDesc = "";
     if (typeof tipoPagamento === "string") {
       if (tipoPagamento.toLowerCase().includes("pix")) tipoDesc = "PIX";
-      else if (tipoPagamento.toLowerCase().includes("debito")) tipoDesc = "Cartão Débito";
-      else if (tipoPagamento.toLowerCase().includes("credito")) tipoDesc = "Cartão Crédito";
+      else if (tipoPagamento.toLowerCase().includes("debito"))
+        tipoDesc = "Cartão Débito";
+      else if (tipoPagamento.toLowerCase().includes("credito"))
+        tipoDesc = "Cartão Crédito";
       else tipoDesc = tipoPagamento;
     }
     doc
@@ -187,9 +194,6 @@ export function generateStyledOrderPdf(order, res) {
         .text(`Parcelado: ${vezes}x`, rightX, blocoY + 54);
     }
   }
-      40,
-      y + 14,
-    );
 
   doc.end();
 }
