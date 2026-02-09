@@ -492,28 +492,18 @@ async function initDatabase() {
       if (!order) {
         return res.status(404).json({ error: "Pedido não encontrado" });
       }
-      // Buscar itens do pedido
-      let items = [];
-      if (order.items) {
-        try {
-          items = JSON.parse(order.items);
-        } catch (e) {
-          items = [];
-        }
-      }
+      // Buscar itens do pedido a partir da tabela order_products
+      const orderProducts = await db("order_products").where({ order_id: order.id });
       // Buscar dados dos produtos para cada item
-      if (items && items.length) {
-        for (let i = 0; i < items.length; i++) {
-          const item = items[i];
-          if (item.id) {
-            const product = await db("products").where({ id: item.id }).first();
-            if (product) {
-              item.name = item.name || product.name;
-              item.price =
-                item.price !== undefined ? item.price : product.price;
-            }
-          }
-        }
+      const items = [];
+      for (const op of orderProducts) {
+        const product = await db("products").where({ id: op.product_id }).first();
+        items.push({
+          id: op.product_id,
+          name: product ? product.name : '-',
+          price: op.price,
+          quantity: op.quantity,
+        });
       }
       order.items = items;
 
@@ -1277,68 +1267,67 @@ app.post("/api/orders", async (req, res) => {
     paymentId,
     observation,
     paymentType,
-    paymentMethod,
-    installments,
-    fee,
   } = req.body;
-  console.log(
-    `📥 [POST /api/orders] Nova ordem recebida para usuário: ${userId}`,
-  );
-
-  const newOrder = {
-    id: `order_${Date.now()}`,
-    userId,
-    observation: observation || null,
-    userName: userName || "Cliente",
-    items: Array.isArray(items) ? JSON.stringify(items) : JSON.stringify([]),
-    total: total || 0,
-    timestamp: new Date().toISOString(),
-    status: paymentId ? "active" : "pending_payment",
-    paymentStatus: paymentId ? "paid" : "pending",
-    paymentId: paymentId || null,
-    paymentType: paymentType || null,
-    paymentMethod: paymentMethod || null,
-    installments: installments || null,
-    fee: fee || null,
-  };
-
-  console.log(`📦 Criando pedido ${newOrder.id}`);
 
   try {
-    // Garante que o usuário existe (para convidados)
-    const userExists = await db("users").where({ id: userId }).first();
-
-    if (!userExists) {
-      await db("users").insert({
-        id: userId,
-        name: userName || "Convidado",
-        email: null,
-        cpf: null,
-        historico: "[]",
-        pontos: 0,
-      });
-    }
-
-    // Checagem simples de estoque suficiente (sem reservar)
-    for (const item of items) {
-      const product = await db("products").where({ id: item.id }).first();
-      if (!product) {
-        console.warn(`⚠️ Produto ${item.id} não encontrado no estoque!`);
-        continue;
+    // Iniciamos uma transação para garantir integridade dos dados
+    await db.transaction(async (trx) => {
+      
+      // 1. Garante que o usuário existe
+      const userExists = await trx("users").where({ id: userId }).first();
+      if (!userExists) {
+        await trx("users").insert({
+          id: userId,
+          name: userName || "Convidado",
+          email: null,
+          cpf: null,
+          historico: "[]",
+          pontos: 0,
+        });
       }
-      if (product.stock !== null && product.stock < item.quantity) {
-        throw new Error(
-          `Estoque insuficiente para ${item.name}. Disponível: ${product.stock}, Solicitado: ${item.quantity}`,
-        );
+
+      // 2. Checagem de estoque
+      for (const item of items) {
+        const product = await trx("products").where({ id: item.id }).first();
+        if (!product) {
+          throw new Error(`Produto ${item.id} não encontrado no estoque!`);
+        }
+        if (product.stock !== null && product.stock < item.quantity) {
+          throw new Error(
+            `Estoque insuficiente para ${item.name}. Disponível: ${product.stock}, Solicitado: ${item.quantity}`
+          );
+        }
       }
-    }
 
-    // Salva o pedido
-    await db("orders").insert(newOrder);
+      // 3. Define o objeto do pedido (estava faltando no seu código)
+      const newOrder = {
+        id: `ORD-${Date.now()}`, // Exemplo de geração de ID
+        user_id: userId,
+        total: total,
+        payment_id: paymentId,
+        payment_type: paymentType,
+        observation: observation,
+        status: "pending",
+        created_at: new Date(),
+      };
 
-    // Não desconta estoque nem ajusta reserva aqui!
-    console.log(`✅ Pedido ${newOrder.id} criado com sucesso!`);
-    res.status(201).json({ ...newOrder, items: items || [] });
+      // 4. Salva o pedido
+      await trx("orders").insert(newOrder);
+
+      // 5. Salva os itens do pedido na tabela order_products
+      if (Array.isArray(items) && items.length > 0) {
+        const orderProducts = items.map((item) => ({
+          order_id: newOrder.id,
+          product_id: item.id,
+          quantity: item.quantity || 1,
+          price: item.price !== undefined ? item.price : 0,
+        }));
+        await trx("order_products").insert(orderProducts);
+      }
+
+      console.log(`✅ Pedido ${newOrder.id} criado com sucesso!`);
+      res.status(201).json({ ...newOrder, items: items || [] });
+    });
   } catch (e) {
     console.error("❌ Erro ao salvar pedido:", e);
     res.status(500).json({ error: e.message || "Erro ao salvar ordem" });
