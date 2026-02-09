@@ -10,6 +10,7 @@ import { createClient } from "redis";
 import { MercadoPagoConfig, Payment, Preference } from "mercadopago";
 import paymentRoutes from "./routes/payment.js";
 import * as paymentService from "./services/paymentService.js";
+import PDFDocument from "pdfkit";
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -480,6 +481,54 @@ async function initDatabase() {
 
   // Modo single-tenant: não cria tabela de lojas
   // Configure as credenciais Mercado Pago no .env
+  import PDFDocument from "pdfkit";
+  // ...existing code...
+
+  // Endpoint para gerar e baixar o PDF do pedido
+  app.get("/api/orders/:id/receipt-pdf", async (req, res) => {
+    try {
+      const orderId = req.params.id;
+      // Buscar o pedido no banco de dados
+      const order = await db("orders").where({ id: orderId }).first();
+      if (!order) {
+        return res.status(404).json({ error: "Pedido não encontrado" });
+      }
+      // Buscar itens do pedido, se necessário (ajuste conforme seu modelo)
+      let items = [];
+      if (order.items) {
+        try {
+          items = JSON.parse(order.items);
+        } catch (e) {
+          items = [];
+        }
+      }
+      order.items = items;
+      // Gerar PDF em memória
+      const doc = new PDFDocument();
+      res.setHeader("Content-Type", "application/pdf");
+      res.setHeader("Content-Disposition", `inline; filename=pedido-${order.id}.pdf`);
+      doc.fontSize(18).text("Comprovante de Pedido", { align: "center" });
+      doc.moveDown();
+      doc.fontSize(12).text(`Pedido: ${order.id}`);
+      doc.text(`Cliente: ${order.userName || "-"}`);
+      doc.text(`Email: ${order.email || "-"}`);
+      doc.text(`Data/Hora: ${new Date(order.timestamp).toLocaleString()}`);
+      doc.text(`Forma de Pagamento: ${order.paymentType || "-"}`);
+      doc.text(`Status: ${order.paymentStatus || "-"}`);
+      doc.moveDown();
+      doc.text("Produtos:");
+      (order.items || []).forEach((item) => {
+        doc.text(`- ${item.name} x${item.quantity} - R$${item.price}`);
+      });
+      doc.moveDown();
+      doc.text(`Total: R$${order.total}`);
+      doc.end();
+      doc.pipe(res);
+    } catch (error) {
+      console.error("Erro ao gerar PDF do pedido:", error);
+      res.status(500).json({ error: "Erro ao gerar PDF do pedido" });
+    }
+  });
   // ...existing code...
   // ========== LOGIN POR CPF E SENHA ===========
   app.post("/api/users/login", async (req, res) => {
@@ -1299,6 +1348,23 @@ app.post("/api/orders", async (req, res) => {
     // Salva o pedido
     await db("orders").insert(newOrder);
 
+    // Após salvar, desconta o estoque real e ajusta a reserva
+    for (const item of items) {
+      // Busca produto atualizado
+      const product = await db("products").where({ id: item.id }).first();
+      if (!product) continue;
+      // Calcula novo estoque e nova reserva
+      const novoStock = Math.max(0, (product.stock || 0) - item.quantity);
+      const novoReserved = Math.max(0, (product.stock_reserved || 0) - item.quantity);
+      await db("products")
+        .where({ id: item.id })
+        .update({
+          stock: novoStock,
+          stock_reserved: novoReserved
+        });
+      console.log(`  📦 ${item.name}: estoque ${product.stock} → ${novoStock}, reserva ${product.stock_reserved} → ${novoReserved}`);
+    }
+
     console.log(`✅ Pedido ${newOrder.id} criado com sucesso!`);
 
     res.status(201).json({ ...newOrder, items: items || [] });
@@ -1931,8 +1997,7 @@ app.post("/api/notifications/mercadopago", async (req, res) => {
 app.get("/api/notifications/mercadopago", (req, res) => {
   res.json({
     status: "ready",
-    message: "IPN endpoint ativo para pagamentos Point",
-  });
+    message: "
 });
 
 // --- WEBHOOK MERCADO PAGO (Notificação Instantânea) ---
