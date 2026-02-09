@@ -10,6 +10,7 @@ import { createClient } from "redis";
 import { MercadoPagoConfig, Payment, Preference } from "mercadopago";
 import paymentRoutes from "./routes/payment.js";
 import * as paymentService from "./services/paymentService.js";
+// ...existing imports...
 import PDFDocument from "pdfkit";
 
 const app = express();
