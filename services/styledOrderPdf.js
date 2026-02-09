@@ -16,9 +16,9 @@ export function generateStyledOrderPdf(order, res) {
 
   // Cabeçalho
   doc
-    .fontSize(18)
+    .fontSize(16)
     .font("Helvetica-Bold")
-    .text("ORÇAMENTO", 0, 40, { align: "center" });
+    .text("PEDIDO (entre em contato para cotar seu frete 11942058445)", 0, 40, { align: "center" });
 
   // Dados do cliente (usando campos reais do pedido)
   doc
@@ -57,7 +57,12 @@ export function generateStyledOrderPdf(order, res) {
   let y = tableTop + 20;
   (order.items || []).forEach((item) => {
     // Suporte a diferentes nomes de campos
-    const nome = item.name || item.produto || item.title || "-";
+    let nome = item.name || item.produto || item.title || item.product || item.descricao || item.description || "-";
+    // Se o item for apenas um id, tente buscar o nome pelo menu.json (opcional)
+    if (typeof nome === 'number' && order.menu && Array.isArray(order.menu)) {
+      const found = order.menu.find(prod => prod.id === nome);
+      if (found && found.name) nome = found.name;
+    }
     const qtd = item.quantity || item.qtd || item.amount || 1;
     const valor = item.price !== undefined ? item.price : (item.valor_unit || item.unit_price || 0);
     doc
