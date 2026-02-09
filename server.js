@@ -502,27 +502,11 @@ async function initDatabase() {
         }
       }
       order.items = items;
-      // Gerar PDF em memória
-      const doc = new PDFDocument();
+      // PDF estilizado
       res.setHeader("Content-Type", "application/pdf");
       res.setHeader("Content-Disposition", `inline; filename=pedido-${order.id}.pdf`);
-      doc.fontSize(18).text("Comprovante de Pedido", { align: "center" });
-      doc.moveDown();
-      doc.fontSize(12).text(`Pedido: ${order.id}`);
-      doc.text(`Cliente: ${order.userName || "-"}`);
-      doc.text(`Email: ${order.email || "-"}`);
-      doc.text(`Data/Hora: ${new Date(order.timestamp).toLocaleString()}`);
-      doc.text(`Forma de Pagamento: ${order.paymentType || "-"}`);
-      doc.text(`Status: ${order.paymentStatus || "-"}`);
-      doc.moveDown();
-      doc.text("Produtos:");
-      (order.items || []).forEach((item) => {
-        doc.text(`- ${item.name} x${item.quantity} - R$${item.price}`);
-      });
-      doc.moveDown();
-      doc.text(`Total: R$${order.total}`);
-      doc.end();
-      doc.pipe(res);
+      const { generateStyledOrderPdf } = await import("./services/styledOrderPdf.js");
+      generateStyledOrderPdf(order, res);
     } catch (error) {
       console.error("Erro ao gerar PDF do pedido:", error);
       res.status(500).json({ error: "Erro ao gerar PDF do pedido" });
