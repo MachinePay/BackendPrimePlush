@@ -1,3 +1,4 @@
+import { sendOrderPdfEmail } from "./services/orderPdfEmail.js";
 import express from "express";
 import fs from "fs/promises";
 import path from "path";
@@ -2035,6 +2036,15 @@ app.post("/api/webhooks/mercadopago", async (req, res) => {
                 paymentType: "online",
                 paymentMethod: payment.payment_method_id || "unknown",
               });
+              // Envia PDF por email para o cliente, se houver email
+              if (order.email) {
+                try {
+                  await sendOrderPdfEmail({ order, email: order.email });
+                  console.log(`📧 PDF enviado para ${order.email}`);
+                } catch (e) {
+                  console.error("Erro ao enviar PDF do pedido:", e);
+                }
+              }
 
               console.log(`🎉 Estoque atualizado com sucesso e pedido marcado como pago!`);
             } else {
