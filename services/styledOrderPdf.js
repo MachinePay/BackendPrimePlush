@@ -1,5 +1,6 @@
 import PDFDocument from "pdfkit";
 import path from "path";
+import fs from "fs";
 
 export function generateStyledOrderPdf(order, res) {
   const doc = new PDFDocument({ margin: 40, size: "A4" });
@@ -7,30 +8,42 @@ export function generateStyledOrderPdf(order, res) {
   // Pipe para response
   doc.pipe(res);
 
-  // Logo (opcional, só se existir)
-  try {
-    doc.image(path.join(process.cwd(), "public", "logo.png"), 40, 30, { width: 90 });
-  } catch (e) {
-    // Se não existir, ignora
+  // Centralizar logo acima do título
+  const logoPath = path.join(process.cwd(), "public", "logo.png");
+  let logoHeight = 0;
+  if (fs.existsSync(logoPath)) {
+    // Centralizar horizontalmente
+    const logoWidth = 120;
+    logoHeight = 70;
+    const pageWidth = doc.page.width;
+    const xLogo = (pageWidth - logoWidth) / 2;
+    doc.image(logoPath, xLogo, 30, { width: logoWidth });
   }
-
-  // Cabeçalho
+  // Cabeçalho ajustado para ficar abaixo da logo
+  const headerY = 30 + logoHeight + 10;
   doc
     .fontSize(16)
     .font("Helvetica-Bold")
-    .text("PEDIDO (entre em contato para cotar seu frete 11942058445)", 0, 40, { align: "center" });
+    .text("PEDIDO (entre em contato para cotar seu frete 11942058445)", 0, headerY, { align: "center" });
 
   // Dados do cliente (usando campos reais do pedido)
+  // Busca nome, email, telefone, endereço, cep
+  const nomeCliente = order.userName || order.name || order.cliente || order.customerName || order.customer || "-";
+  const emailCliente = order.email || order.customerEmail || order.userEmail || "-";
+  const telefoneCliente = order.phone || order.telefone || order.customerPhone || order.userPhone || "-";
+  const enderecoCliente = order.address || order.endereco || order.customerAddress || order.userAddress || "-";
+  const cepCliente = order.cep || order.zip || order.customerCep || order.userCep || "-";
+  const dadosY = headerY + 30;
   doc
     .fontSize(10)
     .font("Helvetica-Bold")
-    .text("DADOS DO CLIENTE", 40, 110)
+    .text("DADOS DO CLIENTE", 40, dadosY)
     .font("Helvetica")
-    .text(`Nome: ${order.userName || order.cliente || "-"}`)
-    .text(`Telefone: ${order.phone || "-"}`)
-    .text(`E-mail: ${order.email || "-"}`)
-    .text(`Endereço: ${order.address || "-"}`)
-    .text(`CEP: ${order.cep || "-"}`);
+    .text(`Nome: ${nomeCliente}`)
+    .text(`Telefone: ${telefoneCliente}`)
+    .text(`E-mail: ${emailCliente}`)
+    .text(`Endereço: ${enderecoCliente}`)
+    .text(`CEP: ${cepCliente}`);
   // Forma de pagamento e peso
   doc
     .font("Helvetica-Bold")
@@ -54,15 +67,19 @@ export function generateStyledOrderPdf(order, res) {
     .text("Subtotal", 350, tableTop);
 
   // Linhas da tabela (usando estrutura real do pedido)
+  // Se não encontrar nome do produto, busca no menu.json
+  let menu = [];
+  try {
+    menu = JSON.parse(fs.readFileSync(path.join(process.cwd(), "data", "menu.json"), "utf8"));
+  } catch {}
   let y = tableTop + 20;
   (order.items || []).forEach((item) => {
-    // Suporte a diferentes nomes de campos
-    let nome = item.name || item.produto || item.title || item.product || item.descricao || item.description || "-";
-    // Se o item for apenas um id, tente buscar o nome pelo menu.json (opcional)
-    if (typeof nome === 'number' && order.menu && Array.isArray(order.menu)) {
-      const found = order.menu.find(prod => prod.id === nome);
+    let nome = item.name || item.produto || item.title || item.product || item.descricao || item.description;
+    if (!nome && item.id && menu.length) {
+      const found = menu.find(prod => prod.id === item.id);
       if (found && found.name) nome = found.name;
     }
+    if (!nome) nome = "-";
     const qtd = item.quantity || item.qtd || item.amount || 1;
     const valor = item.price !== undefined ? item.price : (item.valor_unit || item.unit_price || 0);
     doc
@@ -87,12 +104,13 @@ export function generateStyledOrderPdf(order, res) {
     .font("Helvetica")
     .text(order.observation || order.observacoes || order.observacao || "-", 40, y + 75, { width: 500 });
 
-  // Rodapé
+  // Rodapé mais próximo do conteúdo
+  const rodapeY = y + 60;
   doc
     .fontSize(8)
     .font("Helvetica")
-    .text("CONTATO PARA CONFIRMAR PEDIDO", 40, 780)
-    .text("WhatsApp: (11) 94205-8445 | E-mail: orcamento@girakids.com", 40, 790);
+    .text("CONTATO PARA CONFIRMAR PEDIDO", 40, rodapeY)
+    .text("WhatsApp: (11) 94205-8445 | E-mail: orcamento@girakids.com", 40, rodapeY + 10);
 
   doc.end();
 }
