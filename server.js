@@ -10,6 +10,7 @@ import { createClient } from "redis";
 import { MercadoPagoConfig, Payment, Preference } from "mercadopago";
 import paymentRoutes from "./routes/payment.js";
 import * as paymentService from "./services/paymentService.js";
+import PDFDocument from "pdfkit";
 // ...existing imports...
 import PDFDocument from "pdfkit";
 
@@ -1998,8 +1999,8 @@ app.post("/api/notifications/mercadopago", async (req, res) => {
 app.get("/api/notifications/mercadopago", (req, res) => {
   res.json({
     status: "ready",
-    message: "
-});
+    message: "IPN endpoint pronto"
+  });
 
 // --- WEBHOOK MERCADO PAGO (Notificação Instantânea) ---
 
