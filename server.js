@@ -11,8 +11,6 @@ import { MercadoPagoConfig, Payment, Preference } from "mercadopago";
 import paymentRoutes from "./routes/payment.js";
 import * as paymentService from "./services/paymentService.js";
 import PDFDocument from "pdfkit";
-// ...existing imports...
-import PDFDocument from "pdfkit";
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -483,7 +481,6 @@ async function initDatabase() {
 
   // Modo single-tenant: não cria tabela de lojas
   // Configure as credenciais Mercado Pago no .env
-  import PDFDocument from "pdfkit";
   // ...existing code...
 
   // Endpoint para gerar e baixar o PDF do pedido
