@@ -1994,10 +1994,12 @@ app.post("/api/notifications/mercadopago", async (req, res) => {
 
 // Endpoint teste para validar IPN
 app.get("/api/notifications/mercadopago", (req, res) => {
+
   res.json({
     status: "ready",
     message: "IPN endpoint pronto"
   });
+});
 
 // --- WEBHOOK MERCADO PAGO (Notificação Instantânea) ---
 
