@@ -501,6 +501,20 @@ async function initDatabase() {
           items = [];
         }
       }
+      // Buscar dados dos produtos para cada item
+      if (items && items.length) {
+        for (let i = 0; i < items.length; i++) {
+          const item = items[i];
+          if (item.id) {
+            const product = await db("products").where({ id: item.id }).first();
+            if (product) {
+              item.name = item.name || product.name;
+              item.price =
+                item.price !== undefined ? item.price : product.price;
+            }
+          }
+        }
+      }
       order.items = items;
 
       // Buscar dados do usuário
