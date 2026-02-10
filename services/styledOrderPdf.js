@@ -22,7 +22,7 @@ export function generateStyledOrderPdf(order, res) {
   doc
     .fontSize(18)
     .font("Helvetica-Bold")
-    .text("PEDIDO (entre em contato para cotar seu frete 11942058445)", 0, y, {
+    .text("ORÇAMENTO (entre em contato para cotar seu frete 11-942058445)", 0, y, {
       align: "center",
     });
   y += 40;
