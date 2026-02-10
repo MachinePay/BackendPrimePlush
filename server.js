@@ -72,10 +72,12 @@ app.get("/api/super-admin/receivables", async (req, res) => {
       const detailedItems = [];
       for (const item of items) {
         let precoBruto = 0;
-        if (item.productId) {
-          const prod = await db("products").where({ id: item.productId }).first();
+        // Tenta buscar pelo id do produto
+        const prodId = item.productId || item.id;
+        if (prodId) {
+          const prod = await db("products").where({ id: prodId }).first();
           precoBruto = prod && prod.priceRaw ? parseFloat(prod.priceRaw) : 0;
-        } else if (item.precoBruto) {
+        } else if (item.precoBruto !== undefined) {
           precoBruto = parseFloat(item.precoBruto);
         }
         const price = Number(item.price) || 0;

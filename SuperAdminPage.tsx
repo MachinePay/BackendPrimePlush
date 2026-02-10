@@ -1,7 +1,28 @@
+
+
+
 import React, { useState, useEffect } from "react";
-import { login, isAuthenticated, logout } from "../services/apiService";
-import logo from "../assets/primeplush-logo.png";
 import SuperAdminReceivablesDetails from "../components/SuperAdminReceivablesDetails";
+
+interface ItemDetail {
+  name: string;
+  price: number;
+  precoBruto: number;
+  quantity: number;
+  valueToReceive: number;
+}
+
+interface OrderDetail {
+  id: string;
+  timestamp: string;
+  userName?: string;
+  total: number;
+  orderValueToReceive: number;
+  items: ItemDetail[];
+  status?: string;
+  paymentType?: string;
+  paymentStatus?: string;
+}
 
 interface StatsData {
   stats: {
@@ -14,29 +35,30 @@ interface StatsData {
     amount: number;
     date: string;
   }>;
-  orders?: Order[]; // Adiciona lista de pedidos para detalhamento
+  orders: OrderDetail[];
 }
 
-export default function SuperAdminPage() {
-  const [password, setPassword] = useState("");
-  const [loggedIn, setLoggedIn] = useState(isAuthenticated());
-  const [loading, setLoading] = useState(false);
+
+import logo from "../assets/primeplush-logo.png";
+
+const SuperAdminPage: React.FC = () => {
   const [data, setData] = useState<StatsData | null>(null);
+  const [receivedOrderIds, setReceivedOrderIds] = useState<string[]>([]);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [password, setPassword] = useState("");
+  const [loggedIn, setLoggedIn] = useState(false);
 
   useEffect(() => {
     if (loggedIn) {
-      fetchStats();
-      // Atualiza a cada 30 segundos
-      const interval = setInterval(fetchStats, 30000);
+      fetchData();
+      const interval = setInterval(fetchData, 30000);
       return () => clearInterval(interval);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loggedIn]);
 
-  async function fetchStats() {
-    const wasLoading = loading;
-    if (!wasLoading) setLoading(true);
+  const fetchData = async () => {
+    setLoading(true);
     setError("");
     try {
       const response = await fetch(
@@ -47,68 +69,38 @@ export default function SuperAdminPage() {
           },
         }
       );
-      if (!response.ok) {
-        throw new Error("Erro ao buscar dados");
-      }
+      if (!response.ok) throw new Error("Erro ao buscar dados");
       const result = await response.json();
       setData(result);
     } catch (e: any) {
       setError(e.message || "Erro ao buscar dados");
     }
-    if (!wasLoading) setLoading(false);
-  }
+    setLoading(false);
+  };
 
-  async function handleMarkReceived() {
-    if (!data || data.stats.totalToReceive <= 0) {
-      setError("Não há valores a receber");
-      return;
-    }
-
-    const confirmed = window.confirm(
-      `Confirmar recebimento de R$ ${data.stats.totalToReceive.toFixed(2)}?`
-    );
-    if (!confirmed) return;
-
+  const handleLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
     setLoading(true);
     setError("");
     try {
+      // Testa senha fazendo uma requisição
       const response = await fetch(
-        `${import.meta.env.VITE_API_URL || "http://localhost:3001"}/api/super-admin/receivables/mark-received`,
+        `${import.meta.env.VITE_API_URL || "http://localhost:3001"}/api/super-admin/receivables`,
         {
-          method: "POST",
           headers: {
             "x-super-admin-password": password,
           },
         }
       );
-      if (!response.ok) {
-        throw new Error("Erro ao marcar como recebido");
-      }
-      await fetchStats(); // Atualiza os dados
-      alert("Recebimento registrado com sucesso!");
+      if (!response.ok) throw new Error("Senha incorreta ou não autorizado");
+      const result = await response.json();
+      setData(result);
+      setLoggedIn(true);
     } catch (e: any) {
-      setError(e.message || "Erro ao marcar como recebido");
+      setError(e.message || "Erro ao autenticar");
     }
     setLoading(false);
-  }
-
-  async function handleLogin(e: React.FormEvent) {
-    e.preventDefault();
-    setLoading(true);
-    setError("");
-    const ok = await login("superadmin", password);
-    setLoading(false);
-    if (ok) setLoggedIn(true);
-    else setError("Senha incorreta");
-  }
-
-  function handleLogout() {
-    logout();
-    setLoggedIn(false);
-    setPassword("");
-    setData(null);
-    setError("");
-  }
+  };
 
   if (!loggedIn) {
     return (
@@ -150,143 +142,61 @@ export default function SuperAdminPage() {
     );
   }
 
+  const handleMarkReceived = async () => {
+    if (!data || data.stats.totalToReceive <= 0) return;
+    if (!window.confirm(`Confirmar recebimento de R$ ${data.stats.totalToReceive.toFixed(2)}?`)) return;
+    setLoading(true);
+    setError("");
+    try {
+      const response = await fetch(
+        `${import.meta.env.VITE_API_URL || "http://localhost:3001"}/api/super-admin/receivables/mark-received`,
+        {
+          method: "POST",
+          headers: {
+            "x-super-admin-password": password,
+          },
+        }
+      );
+      if (!response.ok) throw new Error("Erro ao marcar como recebido");
+      const result = await response.json();
+      setReceivedOrderIds(result.receivedOrderIds || []);
+      await fetchData();
+    } catch (e: any) {
+      setError(e.message || "Erro ao marcar como recebido");
+    }
+    setLoading(false);
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-purple-50 to-pink-50 p-6">
       <div className="max-w-6xl mx-auto">
-        {/* Header */}
-        <div className="bg-white shadow-xl rounded-2xl p-6 mb-6 border-2 border-purple-200">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-4">
-              <img src={logo} alt="PrimePlush Logo" className="w-16 h-16" />
-              <div>
-                <h1 className="text-3xl font-bold text-purple-600">
-                  Dashboard Super Admin
-                </h1>
-                <p className="text-gray-600 text-sm">
-                  Visão financeira em tempo real
-                </p>
-              </div>
-            </div>
-            <button
-              onClick={handleLogout}
-              className="bg-red-500 hover:bg-red-600 text-white font-semibold px-6 py-3 rounded-lg transition-all shadow-lg hover:shadow-xl"
-            >
-              Sair
-            </button>
-          </div>
-        </div>
-
-        {/* Stats Cards */}
-        {loading && !data && (
-          <div className="text-center py-12">
-            <div className="inline-block w-12 h-12 border-4 border-purple-600 border-t-transparent rounded-full animate-spin"></div>
-            <p className="mt-4 text-gray-600">Carregando dados...</p>
-          </div>
-        )}
-
-        {error && !data && (
-          <div className="bg-red-50 border-2 border-red-200 text-red-600 p-6 rounded-lg text-center">
-            {error}
-          </div>
-        )}
-
+        <h1 className="text-3xl font-bold text-purple-600 mb-6">Dashboard Super Admin</h1>
+        {loading && <div className="text-center">Carregando...</div>}
+        {error && <div className="text-red-600 text-center mb-4">{error}</div>}
         {data && (
           <>
-            {/* Card Total a Receber - DESTAQUE */}
-            <div className="bg-gradient-to-br from-purple-500 to-pink-500 shadow-2xl rounded-3xl p-8 mb-6 border-4 border-white">
-              <div className="flex items-center gap-4 mb-4">
-                <div className="w-16 h-16 bg-white rounded-full flex items-center justify-center">
-                  <span className="text-4xl">💰</span>
-                </div>
-                <h2 className="text-2xl font-bold text-white">
-                  Total a Receber
-                </h2>
-              </div>
-              <p className="text-6xl font-bold text-white mb-2">
-                R$ {data.stats.totalToReceive.toFixed(2)}
-              </p>
-              <p className="text-white text-opacity-90 mb-6">
-                Receita total confirmada
-              </p>
+            <div className="mb-4 flex items-center gap-4">
+              <span className="font-semibold text-purple-700 text-lg">Valor a receber (total): R${data.stats.totalToReceive.toFixed(2)}</span>
               <button
+                className="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-6 rounded-lg transition-all disabled:opacity-60 disabled:cursor-not-allowed shadow-lg hover:shadow-xl"
                 onClick={handleMarkReceived}
-                disabled={loading || data.stats.totalToReceive === 0}
-                className="bg-white text-purple-600 hover:bg-gray-100 font-bold py-4 px-8 rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed shadow-lg hover:shadow-xl text-lg w-full"
+                disabled={loading || data.stats.totalToReceive <= 0}
               >
-                {loading ? "Processando..." : "✅ Marcar como Recebido"}
+                Recebido
               </button>
             </div>
-
-            {/* Detalhamento dos pedidos e cálculo */}
-            {data.orders && data.orders.length > 0 && (
-              <SuperAdminReceivablesDetails
-                orders={data.orders}
-                totalToReceive={data.stats.totalToReceive}
-                totalReceived={data.stats.totalReceived}
-                alreadyReceived={data.stats.alreadyReceived}
-              />
-            )}
-
-            {/* Histórico de Recebimentos */}
-            <div className="bg-white shadow-xl rounded-2xl p-6 border-2 border-gray-200">
-              <h2 className="text-2xl font-bold text-gray-800 mb-6 flex items-center gap-2">
-                <span>📋</span> Histórico de Recebimentos
-              </h2>
-
-              {data.history.length === 0 ? (
-                <div className="text-center py-8 text-gray-500">
-                  <p className="text-lg">
-                    Nenhum recebimento registrado ainda
-                  </p>
-                  <p className="text-sm mt-2">
-                    Os recebimentos aparecerão aqui após marcar como recebido
-                  </p>
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  {data.history.map((item) => (
-                    <div
-                      key={item.id}
-                      className="flex items-center justify-between p-4 bg-gray-50 rounded-lg border border-gray-200 hover:bg-gray-100 transition-colors"
-                    >
-                      <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 bg-green-100 rounded-full flex items-center justify-center">
-                          <span className="text-xl">✅</span>
-                        </div>
-                        <div>
-                          <p className="font-bold text-green-600 text-xl">
-                            R$ {item.amount.toFixed(2)}
-                          </p>
-                          <p className="text-sm text-gray-600">
-                            Recebido em{" "}
-                            {new Date(item.date).toLocaleString("pt-BR")}
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
+            <SuperAdminReceivablesDetails
+              orders={data.orders}
+              totalToReceive={data.stats.totalToReceive}
+              totalReceived={data.stats.totalReceived}
+              alreadyReceived={data.stats.alreadyReceived}
+              receivedOrderIds={receivedOrderIds}
+            />
           </>
-        )}
-
-        {/* Indicador de atualização */}
-        {data && (
-          <div className="mt-6 text-center">
-            <p className="text-sm text-gray-500">
-              {loading ? (
-                <span className="inline-flex items-center gap-2">
-                  <span className="w-4 h-4 border-2 border-gray-400 border-t-transparent rounded-full animate-spin"></span>
-                  Atualizando...
-                </span>
-              ) : (
-                "Atualização automática a cada 30 segundos"
-              )}
-            </p>
-          </div>
         )}
       </div>
     </div>
   );
-}
+};
+
+export default SuperAdminPage;
