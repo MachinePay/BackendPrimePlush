@@ -1312,7 +1312,17 @@ app.post("/api/orders", async (req, res) => {
         }
       }
 
-      // 3. Define o objeto do pedido com nomes corretos das colunas
+      // 3. Garante precoBruto em todos os itens
+      const itemsWithPrecoBruto = Array.isArray(items)
+        ? items.map((item) => ({
+            ...item,
+            precoBruto:
+              item.precoBruto !== undefined
+                ? Number(item.precoBruto)
+                : 0,
+          }))
+        : [];
+
       const newOrder = {
         id: `order_${Date.now()}`,
         userId: userId,
@@ -1324,9 +1334,7 @@ app.post("/api/orders", async (req, res) => {
         paymentId: paymentId || null,
         paymentType: paymentType || null,
         paymentMethod: paymentMethod || null,
-        items: Array.isArray(items)
-          ? JSON.stringify(items)
-          : JSON.stringify([]),
+        items: JSON.stringify(itemsWithPrecoBruto),
         observation: observation || null,
         installments: installments || null,
         fee: fee || null,
