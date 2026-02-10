@@ -153,11 +153,33 @@ app.post("/api/super-admin/receivables/mark-received", async (req, res) => {
       });
     }
 
-    // Calcula o valor à receber: soma dos pedidos pagos/autorizados menos o que já foi recebido
+    // Calcula o valor líquido à receber: soma dos pedidos pagos/autorizados menos o que já foi recebido
     const paidOrders = await db("orders")
       .whereIn("paymentStatus", ["paid", "authorized"])
-      .select("total");
-    const totalBrutoReceber = paidOrders.reduce((sum, o) => sum + parseFloat(o.total || 0), 0);
+      .select("id", "items");
+    let totalBrutoReceber = 0;
+    for (const order of paidOrders) {
+      let items = [];
+      try {
+        items = Array.isArray(order.items) ? order.items : JSON.parse(order.items);
+      } catch {
+        items = [];
+      }
+      for (const item of items) {
+        let precoBruto = 0;
+        const prodId = item.productId || item.id;
+        if (prodId) {
+          const prod = await db("products").where({ id: prodId }).first();
+          precoBruto = prod && prod.priceRaw ? parseFloat(prod.priceRaw) : 0;
+        } else if (item.precoBruto !== undefined) {
+          precoBruto = parseFloat(item.precoBruto);
+        }
+        const price = Number(item.price) || 0;
+        const quantity = Number(item.quantity) || 1;
+        const valueToReceive = (price - precoBruto) * quantity;
+        totalBrutoReceber += valueToReceive;
+      }
+    }
     const totalAlreadyReceived = await db("super_admin_receivables")
       .sum("amount as total")
       .first();
