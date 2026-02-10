@@ -153,19 +153,16 @@ app.post("/api/super-admin/receivables/mark-received", async (req, res) => {
       });
     }
 
-    // Calcula quanto tem a receber agora
-    const totalPaidOrders = await db("orders")
+    // Calcula o valor à receber: soma dos pedidos pagos/autorizados menos o que já foi recebido
+    const paidOrders = await db("orders")
       .whereIn("paymentStatus", ["paid", "authorized"])
-      .sum("total as total")
-      .first();
-
+      .select("total");
+    const totalBrutoReceber = paidOrders.reduce((sum, o) => sum + parseFloat(o.total || 0), 0);
     const totalAlreadyReceived = await db("super_admin_receivables")
       .sum("amount as total")
       .first();
-
-    const totalReceived = parseFloat(totalPaidOrders.total) || 0;
     const alreadyReceived = parseFloat(totalAlreadyReceived.total) || 0;
-    const toReceive = totalReceived - alreadyReceived;
+    const toReceive = totalBrutoReceber - alreadyReceived;
 
     if (toReceive <= 0) {
       return res.status(400).json({
@@ -173,7 +170,7 @@ app.post("/api/super-admin/receivables/mark-received", async (req, res) => {
       });
     }
 
-    // Registra o recebimento
+    // Registra apenas o valor que ainda está à receber
     await db("super_admin_receivables").insert({
       amount: toReceive,
     });
