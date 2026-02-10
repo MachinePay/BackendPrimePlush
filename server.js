@@ -1,42 +1,6 @@
+// ...existing code...
 // Atualizar informações do usuário (incluindo senha)
-app.put("/api/users/:id", async (req, res) => {
-  const { id } = req.params;
-  const { name, email, cpf, cep, address, phone, password } = req.body;
-  if (!name || !email || !cpf || !cep || !address || !phone || !password) {
-    return res.status(400).json({ error: "Todos os campos são obrigatórios" });
-  }
-  try {
-    // Verifica se o usuário existe
-    const user = await db("users").where({ id }).first();
-    if (!user) {
-      return res.status(404).json({ error: "Usuário não encontrado" });
-    }
-    // Atualiza os dados do usuário
-    await db("users")
-      .where({ id })
-      .update({
-        name: name.trim(),
-        email: email.trim(),
-        cpf: String(cpf).replace(/\D/g, ""),
-        cep: cep.trim(),
-        address: address.trim(),
-        phone: phone.trim(),
-        password: password,
-      });
-    // Retorna o usuário atualizado
-    const updatedUser = await db("users").where({ id }).first();
-    res.json({
-      success: true,
-      user: {
-        ...updatedUser,
-        historico: parseJSON(updatedUser.historico),
-      },
-    });
-  } catch (e) {
-    console.error("Erro ao atualizar usuário:", e);
-    res.status(500).json({ error: "Erro ao atualizar usuário" });
-  }
-});
+
 import { sendOrderPdfEmail } from "./services/orderPdfEmail.js";
 import express from "express";
 import fs from "fs/promises";
@@ -627,6 +591,45 @@ async function initDatabase() {
     console.log("⚠️ OpenAI NÃO configurada - OPENAI_API_KEY não encontrada");
   }
 }
+
+app.put("/api/users/:id", async (req, res) => {
+  const { id } = req.params;
+  const { name, email, cpf, cep, address, phone, password } = req.body;
+  if (!name || !email || !cpf || !cep || !address || !phone || !password) {
+    return res.status(400).json({ error: "Todos os campos são obrigatórios" });
+  }
+  try {
+    // Verifica se o usuário existe
+    const user = await db("users").where({ id }).first();
+    if (!user) {
+      return res.status(404).json({ error: "Usuário não encontrado" });
+    }
+    // Atualiza os dados do usuário
+    await db("users")
+      .where({ id })
+      .update({
+        name: name.trim(),
+        email: email.trim(),
+        cpf: String(cpf).replace(/\D/g, ""),
+        cep: cep.trim(),
+        address: address.trim(),
+        phone: phone.trim(),
+        password: password,
+      });
+    // Retorna o usuário atualizado
+    const updatedUser = await db("users").where({ id }).first();
+    res.json({
+      success: true,
+      user: {
+        ...updatedUser,
+        historico: parseJSON(updatedUser.historico),
+      },
+    });
+  } catch (e) {
+    console.error("Erro ao atualizar usuário:", e);
+    res.status(500).json({ error: "Erro ao atualizar usuário" });
+  }
+});
 
 // --- Middlewares ---
 
