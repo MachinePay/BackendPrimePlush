@@ -18,26 +18,22 @@ router.post(
   superAdminAuth,
   async (req, res) => {
     try {
-      console.log("[DEBUG] Headers:", req.headers);
-      console.log("[DEBUG] Body recebido:", req.body);
       let { orderIds } = req.body;
       if (!orderIds || !Array.isArray(orderIds) || orderIds.length === 0) {
-        console.log("[DEBUG] orderIds inválido:", orderIds);
         return res.status(400).json({ error: "orderIds obrigatório (array)" });
       }
-      // Aqui você deve atualizar o status de todos os pedidos no banco para 'received'
-      // Exemplo genérico:
-      // await updateManyOrdersStatus(orderIds, 'received');
-      // Simulação:
-      const updatedOrderIds = orderIds; // Troque por lógica real
-      console.log("[DEBUG] Marcando como recebidos:", updatedOrderIds);
+      const now = new Date().toISOString();
+      // Atualiza todos os pedidos marcando como repassados
+      await db("orders")
+        .whereIn("id", orderIds)
+        .update({ repassadoSuperAdmin: 1, dataRepasseSuperAdmin: now });
       return res.json({
         success: true,
         message: "Recebíveis marcados como recebidos",
-        receivedOrderIds: updatedOrderIds,
+        receivedOrderIds: orderIds,
+        dataRepasse: now,
       });
     } catch (err) {
-      console.log("[DEBUG] Erro interno:", err);
       return res
         .status(500)
         .json({ error: "Erro interno", details: err.message });
@@ -46,18 +42,38 @@ router.post(
 );
 
 // Endpoint detalhado para recebíveis do SuperAdmin
+const knex = require("knex");
+const path = require("path");
+const dbConfig = process.env.DATABASE_URL
+  ? {
+      client: "pg",
+      connection: {
+        connectionString: process.env.DATABASE_URL,
+        ssl: { rejectUnauthorized: false },
+      },
+    }
+  : {
+      client: "sqlite3",
+      connection: {
+        filename: path.join(process.cwd(), "data", "kiosk.sqlite"),
+      },
+      useNullAsDefault: true,
+    };
+const db = knex(dbConfig);
+
+// GET recebíveis do SuperAdmin (apenas não repassados)
 router.get("/super-admin/receivables", superAdminAuth, async (req, res) => {
   try {
-    // Busca todos os pedidos pagos ou autorizados (Mercado Pago)
-    const orders = await getAllOrders({
-      paymentStatus: ["paid", "authorized"],
-    });
+    const orders = await db("orders")
+      .whereIn("paymentStatus", ["paid", "authorized"])
+      .andWhere(function () {
+        this.whereNull("repassadoSuperAdmin").orWhere("repassadoSuperAdmin", 0);
+      })
+      .orderBy("timestamp", "desc");
 
     let totalToReceive = 0;
     const detailedOrders = orders.map((order) => {
-      // Informações básicas
       const { id, timestamp, userName, total } = order;
-      // Parse dos itens
       let items = [];
       try {
         items =
@@ -69,7 +85,6 @@ router.get("/super-admin/receivables", superAdminAuth, async (req, res) => {
       } catch (e) {
         items = [];
       }
-      // Detalhes dos itens e cálculo
       let orderValueToReceive = 0;
       const itemDetails = items.map((item) => {
         const price = Number(item.price) || 0;
@@ -96,17 +111,23 @@ router.get("/super-admin/receivables", superAdminAuth, async (req, res) => {
       };
     });
 
-    // Simule valores já recebidos e recebidos no período
-    const alreadyReceived = 0; // Busque do banco se necessário
-    const totalReceived = 0; // Busque do banco se necessário
-    // Histórico de recebimentos (mock)
-    const history = [];
+    // Histórico de repasses
+    const history = await db("orders")
+      .where("repassadoSuperAdmin", 1)
+      .select(
+        "id",
+        "timestamp as date",
+        "userName",
+        "total",
+        "dataRepasseSuperAdmin",
+      );
+
     res.json({
       success: true,
       stats: {
         totalToReceive,
-        totalReceived,
-        alreadyReceived,
+        totalReceived: history.reduce((sum, o) => sum + (o.total || 0), 0),
+        alreadyReceived: history.length,
       },
       history,
       orders: detailedOrders,
