@@ -18,8 +18,11 @@ router.post(
   superAdminAuth,
   async (req, res) => {
     try {
+      console.log("[DEBUG] Headers:", req.headers);
+      console.log("[DEBUG] Body recebido:", req.body);
       let { orderIds } = req.body;
       if (!orderIds || !Array.isArray(orderIds) || orderIds.length === 0) {
+        console.log("[DEBUG] orderIds inválido:", orderIds);
         return res.status(400).json({ error: "orderIds obrigatório (array)" });
       }
       // Aqui você deve atualizar o status de todos os pedidos no banco para 'received'
@@ -27,12 +30,14 @@ router.post(
       // await updateManyOrdersStatus(orderIds, 'received');
       // Simulação:
       const updatedOrderIds = orderIds; // Troque por lógica real
+      console.log("[DEBUG] Marcando como recebidos:", updatedOrderIds);
       return res.json({
         success: true,
         message: "Recebíveis marcados como recebidos",
         receivedOrderIds: updatedOrderIds,
       });
     } catch (err) {
+      console.log("[DEBUG] Erro interno:", err);
       return res
         .status(500)
         .json({ error: "Erro interno", details: err.message });
