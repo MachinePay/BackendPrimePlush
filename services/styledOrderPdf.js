@@ -11,7 +11,7 @@ export function generateStyledOrderPdf(order, res) {
   let y = 40;
   if (fs.existsSync(logoPath)) {
     const logoWidth = 120;
-    const logoHeight = 70;
+    const logoHeight = 120;
     const pageWidth = doc.page.width;
     const xLogo = (pageWidth - logoWidth) / 2;
     doc.image(logoPath, xLogo, y, { width: logoWidth, height: logoHeight });
