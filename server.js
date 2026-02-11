@@ -49,23 +49,12 @@ app.get("/api/super-admin/receivables", async (req, res) => {
     }
 
 
-    // Buscar todos os pedidos pagos (valor bruto acumulado)
-    // Filtrar para não mostrar pedidos já recebidos
-    // 1. Buscar todos os order_ids já recebidos
-    const receivablesRows = await db("super_admin_receivables").select("order_ids");
-    let receivedOrderIds = [];
-    for (const row of receivablesRows) {
-      if (row.order_ids) {
-        try {
-          const ids = JSON.parse(row.order_ids);
-          if (Array.isArray(ids)) receivedOrderIds.push(...ids);
-        } catch {}
-      }
-    }
-    // 2. Buscar apenas pedidos pagos/autorizados que ainda não foram recebidos
+    // Buscar apenas pedidos pagos/autorizados que ainda não foram recebidos (repassadoSuperAdmin != 1)
     const paidOrders = await db("orders")
       .whereIn("paymentStatus", ["paid", "authorized"])
-      .whereNotIn("id", receivedOrderIds)
+      .where(function() {
+        this.whereNull("repassadoSuperAdmin").orWhere("repassadoSuperAdmin", 0);
+      })
       .orderBy("timestamp", "desc");
 
     // Total já recebido anteriormente
