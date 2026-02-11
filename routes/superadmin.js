@@ -26,7 +26,6 @@ const db = knex(dbConfig);
 
 // 2. Middleware de autenticação
 function superAdminAuth(req, res, next) {
-  console.log("[DEBUG] superAdminAuth chamado! Headers:", req.headers);
   const password = req.headers["x-super-admin-password"];
   if (!password || password !== process.env.SUPER_ADMIN_PASSWORD) {
     return res.status(401).json({ error: "Unauthorized" });
@@ -35,96 +34,81 @@ function superAdminAuth(req, res, next) {
 }
 
 // 3. Endpoint POST - Marcar como recebido
-router.post(
-  "/super-admin/receivables/mark-received",
-  superAdminAuth,
-  async (req, res) => {
-    console.log("[DEBUG] POST /super-admin/receivables/mark-received chamado!");
-    try {
-      let { orderIds } = req.body;
-      console.log("[DEBUG] req.body:", req.body);
+router.post("/super-admin/receivables/mark-received", superAdminAuth, async (req, res) => {
+  try {
+    let { orderIds } = req.body;
 
-      if (!orderIds || !Array.isArray(orderIds) || orderIds.length === 0) {
-        console.log("[DEBUG] orderIds inválido:", orderIds);
-        return res.status(400).json({ error: "orderIds obrigatório (array)" });
-      }
-
-      const now = new Date().toISOString();
-      console.log("[DEBUG] orderIds recebidos:", orderIds);
-
-      const updateResult = await db("orders").whereIn("id", orderIds).update({
-        repassadoSuperAdmin: 1,
-        dataRepasseSuperAdmin: now,
-      });
-
-      console.log("[DEBUG] Resultado do update:", updateResult);
-
-      return res.json({
-        success: true,
-        message: "Recebíveis marcados como recebidos",
-        receivedOrderIds: orderIds,
-        dataRepasse: now,
-        updateResult,
-      });
-    } catch (err) {
-      console.log("[DEBUG] Erro interno:", err);
-      return res
-        .status(500)
-        .json({ error: "Erro interno", details: err.message });
+    if (!orderIds || !Array.isArray(orderIds) || orderIds.length === 0) {
+      return res.status(400).json({ error: "orderIds obrigatório (array)" });
     }
-  },
-);
+
+    const now = new Date().toISOString();
+
+    const updateResult = await db("orders").whereIn("id", orderIds).update({
+      repassadoSuperAdmin: 1,
+      dataRepasseSuperAdmin: now,
+    });
+
+    return res.json({
+      success: true,
+      message: "Recebíveis marcados como recebidos",
+      receivedOrderIds: orderIds,
+      dataRepasse: now,
+      updateResult,
+    });
+  } catch (err) {
+    console.error("[DEBUG] Erro no POST:", err);
+    return res.status(500).json({ error: "Erro interno", details: err.message });
+  }
+});
 
 // 4. Endpoint GET - Listar recebíveis
 router.get("/super-admin/receivables", superAdminAuth, async (req, res) => {
-  console.log("[DEBUG] GET /super-admin/receivables chamado!");
   try {
-    // Buscar todos os order_ids já recebidos
-    const receivablesRows = await db("super_admin_receivables").select(
-      "order_ids",
-    );
-    let receivedOrderIds = [];
+    // 1. Buscar todos os IDs que já foram marcados em repasses anteriores
+    const receivablesRows = await db("super_admin_receivables").select("order_ids");
+    let alreadyProcessedIds = [];
+    
     for (const row of receivablesRows) {
       if (row.order_ids) {
         try {
           const ids = JSON.parse(row.order_ids);
-          if (Array.isArray(ids)) receivedOrderIds.push(...ids);
-        } catch {}
+          if (Array.isArray(ids)) alreadyProcessedIds.push(...ids);
+        } catch (e) { /* ignore parse errors */ }
       }
     }
-    // Buscar apenas pedidos pagos/autorizados que ainda não foram recebidos
+
+    // 2. Buscar pedidos pagos que NÃO estão na lista de processados
     const paidOrders = await db("orders")
       .whereIn("paymentStatus", ["paid", "authorized"])
-      .whereNotIn("id", receivedOrderIds)
+      .whereNotIn("id", alreadyProcessedIds)
       .orderBy("timestamp", "desc");
 
-    // Buscar detalhes dos itens dos pedidos e calcular valor a receber corretamente
     let totalBrutoReceber = 0;
     const detailedOrders = [];
+
     for (const order of paidOrders) {
       let items = [];
       try {
-        items = Array.isArray(order.items)
-          ? order.items
-          : JSON.parse(order.items);
-      } catch {
-        items = [];
-      }
-      // Buscar preço bruto de cada produto
+        items = Array.isArray(order.items) ? order.items : JSON.parse(order.items || "[]");
+      } catch (e) { items = []; }
+
       const detailedItems = [];
       for (const item of items) {
         let precoBruto = 0;
-        // Tenta buscar pelo id do produto
         const prodId = item.productId || item.id;
+        
         if (prodId) {
           const prod = await db("products").where({ id: prodId }).first();
           precoBruto = prod && prod.priceRaw ? parseFloat(prod.priceRaw) : 0;
         } else if (item.precoBruto !== undefined) {
           precoBruto = parseFloat(item.precoBruto);
         }
+
         const price = Number(item.price) || 0;
         const quantity = Number(item.quantity) || 1;
         const valueToReceive = (price - precoBruto) * quantity;
+
         detailedItems.push({
           name: item.name || "",
           price,
@@ -133,11 +117,10 @@ router.get("/super-admin/receivables", superAdminAuth, async (req, res) => {
           valueToReceive,
         });
       }
-      const orderValueToReceive = detailedItems.reduce(
-        (sum, i) => sum + i.valueToReceive,
-        0,
-      );
+
+      const orderValueToReceive = detailedItems.reduce((sum, i) => sum + i.valueToReceive, 0);
       totalBrutoReceber += orderValueToReceive;
+
       detailedOrders.push({
         id: order.id,
         timestamp: order.timestamp,
@@ -151,86 +134,65 @@ router.get("/super-admin/receivables", superAdminAuth, async (req, res) => {
       });
     }
 
-    // Histórico de recebimentos com detalhes dos pedidos
+    // 3. Histórico de repasses realizados
     const historyRows = await db("super_admin_receivables")
       .select("id", "amount", "received_at", "order_ids")
       .orderBy("received_at", "desc")
       .limit(20);
 
-    // Buscar detalhes dos pedidos para cada repasse
     const history = [];
     for (const h of historyRows) {
-      let pedidos = [];
       let orderIds = [];
       try {
         orderIds = h.order_ids ? JSON.parse(h.order_ids) : [];
-      } catch {
-        orderIds = [];
-      }
+      } catch (e) { orderIds = []; }
+
+      // Limpeza de IDs
+      orderIds = Array.isArray(orderIds) 
+        ? orderIds.filter(id => id && (typeof id === 'string' || typeof id === 'number')) 
+        : [];
+
       if (orderIds.length > 0) {
-        const orders = await db("orders").whereIn("id", orderIds);
-        pedidos = orders.map((o) => ({
-          id: o.id,
-          userName: o.userName || "-",
-          total: o.total ? parseFloat(o.total) : 0,
-          timestamp: o.timestamp,
-          dataRepasseSuperAdmin:
-            o.dataRepasseSuperAdmin || h.received_at || null,
-        }));
-      }
-      // Se não houver pedidos, ainda retorna o repasse
-      if (pedidos.length === 0) {
-        pedidos.push({
-          id: "-",
-          userName: "-",
-          total: 0,
-          timestamp: "-",
-          dataRepasseSuperAdmin: h.received_at || null,
+        const ordersFromHistory = await db("orders").whereIn("id", orderIds);
+        ordersFromHistory.forEach(o => {
+          history.push({
+            repasseId: h.id,
+            pedidoId: o.id,
+            cliente: o.userName || "-",
+            valorTotal: o.total ? parseFloat(o.total) : 0,
+            dataPedido: o.timestamp,
+            dataRepasse: o.dataRepasseSuperAdmin || h.received_at,
+          });
         });
-      }
-      for (const p of pedidos) {
+      } else {
         history.push({
           repasseId: h.id,
-          pedidoId: p.id,
-          cliente: p.userName,
-          valorTotal: p.total,
-          dataPedido: p.timestamp,
-          dataRepasse: p.dataRepasseSuperAdmin,
+          pedidoId: "-",
+          cliente: "-",
+          valorTotal: 0,
+          dataPedido: "-",
+          dataRepasse: h.received_at,
         });
       }
     }
 
-    // Total já recebido anteriormente
-    const totalAlreadyReceived = await db("super_admin_receivables")
-      .sum("amount as total")
-      .first();
+    const totalAlreadyReceivedSum = await db("super_admin_receivables").sum("amount as total").first();
 
-    res.json({
+    return res.json({
       success: true,
       stats: {
         totalToReceive: Math.max(0, totalBrutoReceber),
         totalReceived: totalBrutoReceber,
-        alreadyReceived: parseFloat(totalAlreadyReceived.total) || 0,
+        alreadyReceived: parseFloat(totalAlreadyReceivedSum.total) || 0,
       },
       history,
       orders: detailedOrders,
     });
+
   } catch (err) {
-    console.log("[DEBUG] Erro no GET:", err);
-      try {
-        orderIds = h.order_ids ? JSON.parse(h.order_ids) : [];
-      } catch { orderIds = []; }
-      // Filtra apenas strings válidas
-      orderIds = Array.isArray(orderIds)
-        ? orderIds.filter(id => typeof id === 'string' && id.length > 0)
-        : [];
-      if (orderIds.length > 0) {
-        const orders = await db("orders").whereIn("id", orderIds);
-        pedidos = orders.map(o => ({
-          id: o.id,
-          userName: o.userName || "-",
-          total: o.total ? parseFloat(o.total) : 0,
-          timestamp: o.timestamp,
-          dataRepasseSuperAdmin: o.dataRepasseSuperAdmin || h.received_at || null
-        }));
-      }
+    console.error("[DEBUG] Erro no GET:", err);
+    return res.status(500).json({ error: "Erro ao buscar dados", details: err.message });
+  }
+});
+
+export default router;
