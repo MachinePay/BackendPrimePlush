@@ -1,3 +1,4 @@
+// ...existing code...
 // Endpoint para marcar valores como recebidos por IDs
 app.post("/api/super-admin/receivables/mark-received-by-ids", async (req, res) => {
   try {
