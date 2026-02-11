@@ -151,11 +151,54 @@ router.get("/super-admin/receivables", superAdminAuth, async (req, res) => {
       });
     }
 
-    // Histórico de recebimentos
-    const history = await db("super_admin_receivables")
+    // Histórico de recebimentos com detalhes dos pedidos
+    const historyRows = await db("super_admin_receivables")
       .select("id", "amount", "received_at", "order_ids")
       .orderBy("received_at", "desc")
       .limit(20);
+
+    // Buscar detalhes dos pedidos para cada repasse
+    const history = [];
+    for (const h of historyRows) {
+      let pedidos = [];
+      let orderIds = [];
+      try {
+        orderIds = h.order_ids ? JSON.parse(h.order_ids) : [];
+      } catch {
+        orderIds = [];
+      }
+      if (orderIds.length > 0) {
+        const orders = await db("orders").whereIn("id", orderIds);
+        pedidos = orders.map((o) => ({
+          id: o.id,
+          userName: o.userName || "-",
+          total: o.total ? parseFloat(o.total) : 0,
+          timestamp: o.timestamp,
+          dataRepasseSuperAdmin:
+            o.dataRepasseSuperAdmin || h.received_at || null,
+        }));
+      }
+      // Se não houver pedidos, ainda retorna o repasse
+      if (pedidos.length === 0) {
+        pedidos.push({
+          id: "-",
+          userName: "-",
+          total: 0,
+          timestamp: "-",
+          dataRepasseSuperAdmin: h.received_at || null,
+        });
+      }
+      for (const p of pedidos) {
+        history.push({
+          repasseId: h.id,
+          pedidoId: p.id,
+          cliente: p.userName,
+          valorTotal: p.total,
+          dataPedido: p.timestamp,
+          dataRepasse: p.dataRepasseSuperAdmin,
+        });
+      }
+    }
 
     // Total já recebido anteriormente
     const totalAlreadyReceived = await db("super_admin_receivables")
@@ -169,12 +212,7 @@ router.get("/super-admin/receivables", superAdminAuth, async (req, res) => {
         totalReceived: totalBrutoReceber,
         alreadyReceived: parseFloat(totalAlreadyReceived.total) || 0,
       },
-      history: history.map((h) => ({
-        id: h.id,
-        amount: parseFloat(h.amount),
-        date: h.received_at,
-        orderIds: h.order_ids ? JSON.parse(h.order_ids) : [],
-      })),
+      history,
       orders: detailedOrders,
     });
   } catch (err) {
