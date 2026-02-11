@@ -148,8 +148,9 @@ router.get("/super-admin/receivables", superAdminAuth, async (req, res) => {
             cliente: o.userName || "-",
             valorTotal: o.total ? parseFloat(o.total) : 0,
             dataPedido: o.timestamp,
-            dataRepasse: o.dataRepasseSuperAdmin || h.received_at
-          });
+            dataRepasse: o.dataRepasseSuperAdmin || h.received_at,
+            valorRecebido: parseFloat(h.amount),
+          });    
         });
       } else {
         history.push({
@@ -158,7 +159,8 @@ router.get("/super-admin/receivables", superAdminAuth, async (req, res) => {
           cliente: "N/A",
           valorTotal: parseFloat(h.amount) || 0,
           dataPedido: "-",
-          dataRepasse: h.received_at
+          dataRepasse: h.received_at,
+          valorRecebido: parseFloat(h.amount),
         });
       }
     }
