@@ -217,10 +217,20 @@ router.get("/super-admin/receivables", superAdminAuth, async (req, res) => {
     });
   } catch (err) {
     console.log("[DEBUG] Erro no GET:", err);
-    res
-      .status(500)
-      .json({ error: "Erro ao buscar dados", details: err.message });
-  }
-});
-
-export default router;
+      try {
+        orderIds = h.order_ids ? JSON.parse(h.order_ids) : [];
+      } catch { orderIds = []; }
+      // Filtra apenas strings válidas
+      orderIds = Array.isArray(orderIds)
+        ? orderIds.filter(id => typeof id === 'string' && id.length > 0)
+        : [];
+      if (orderIds.length > 0) {
+        const orders = await db("orders").whereIn("id", orderIds);
+        pedidos = orders.map(o => ({
+          id: o.id,
+          userName: o.userName || "-",
+          total: o.total ? parseFloat(o.total) : 0,
+          timestamp: o.timestamp,
+          dataRepasseSuperAdmin: o.dataRepasseSuperAdmin || h.received_at || null
+        }));
+      }
