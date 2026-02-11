@@ -18,6 +18,12 @@ import * as paymentService from "./services/paymentService.js";
 import PDFDocument from "pdfkit";
 import superAdminRoutes from "./routes/superadmin.js";
 
+// Corrige importação para compatibilidade CommonJS/ESM
+// Se der erro, tente:
+// import superAdminRoutes = require('./routes/superadmin.js');
+// ou
+// import * as superAdminRoutes from './routes/superadmin.js';
+
 const app = express();
 const PORT = process.env.PORT || 3001;
 
