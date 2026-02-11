@@ -3362,7 +3362,7 @@ app.post(
       await db("super_admin_receivables").insert({
         amount: totalBrutoReceber,
         order_ids: JSON.stringify(orderIds),
-        created_at: now,
+        received_at: now,
       });
 
       console.log(
