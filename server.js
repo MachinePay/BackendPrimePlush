@@ -125,8 +125,8 @@ app.get("/api/super-admin/receivables", async (req, res) => {
       });
     }
 
-    // Desconsidera o valor já recebido, mostra apenas o total dos pedidos pagos/autorizados
-    const toReceive = totalBrutoReceber;
+    // Desconta o valor já recebido, mostra apenas o saldo dos pedidos pagos/autorizados
+    const toReceive = totalBrutoReceber - (parseFloat(totalAlreadyReceived.total) || 0);
 
     // Histórico de recebimentos
     const history = await db("super_admin_receivables")
@@ -137,7 +137,7 @@ app.get("/api/super-admin/receivables", async (req, res) => {
     res.json({
       success: true,
       stats: {
-        totalToReceive: Math.max(0, toReceive), // Agora mostra o total dos pedidos pagos/autorizados
+        totalToReceive: Math.max(0, toReceive), // Agora mostra o saldo dos pedidos pagos/autorizados
         totalReceived: totalBrutoReceber,
         alreadyReceived: parseFloat(totalAlreadyReceived.total) || 0,
       },
