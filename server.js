@@ -3294,6 +3294,11 @@ app.post(
         received_at: new Date().toISOString(),
       });
 
+      // Marca os pedidos como repassados
+      await db("orders")
+        .whereIn("id", orderIds)
+        .update({ repassadoSuperAdmin: 1, dataRepasseSuperAdmin: new Date().toISOString() });
+
       return res.json({
         success: true,
         message: "Recebíveis marcados como recebidos",
