@@ -47,9 +47,24 @@ app.get("/api/super-admin/receivables", async (req, res) => {
       });
     }
 
+
     // Buscar todos os pedidos pagos (valor bruto acumulado)
+    // Filtrar para não mostrar pedidos já recebidos
+    // 1. Buscar todos os order_ids já recebidos
+    const receivablesRows = await db("super_admin_receivables").select("order_ids");
+    let receivedOrderIds = [];
+    for (const row of receivablesRows) {
+      if (row.order_ids) {
+        try {
+          const ids = JSON.parse(row.order_ids);
+          if (Array.isArray(ids)) receivedOrderIds.push(...ids);
+        } catch {}
+      }
+    }
+    // 2. Buscar apenas pedidos pagos/autorizados que ainda não foram recebidos
     const paidOrders = await db("orders")
       .whereIn("paymentStatus", ["paid", "authorized"])
+      .whereNotIn("id", receivedOrderIds)
       .orderBy("timestamp", "desc");
 
     // Total já recebido anteriormente
@@ -198,9 +213,11 @@ app.post("/api/super-admin/receivables/mark-received", async (req, res) => {
       });
     }
 
-    // Registra apenas o valor que ainda está à receber
+    // Registra o valor e os IDs dos pedidos recebidos
+    const receivedOrderIds = paidOrders.map(o => o.id);
     await db("super_admin_receivables").insert({
       amount: toReceive,
+      order_ids: JSON.stringify(receivedOrderIds),
     });
 
     console.log(
@@ -438,9 +455,19 @@ async function initDatabase() {
     await db.schema.createTable("super_admin_receivables", (table) => {
       table.increments("id").primary();
       table.decimal("amount", 10, 2).notNullable();
+      table.text("order_ids");
       table.timestamp("received_at").defaultTo(db.fn.now());
     });
     console.log("✅ Tabela 'super_admin_receivables' criada com sucesso");
+  } else {
+    // Adiciona a coluna order_ids se não existir
+    const hasOrderIds = await db.schema.hasColumn("super_admin_receivables", "order_ids");
+    if (!hasOrderIds) {
+      await db.schema.alterTable("super_admin_receivables", (table) => {
+        table.text("order_ids");
+      });
+      console.log("✅ Coluna 'order_ids' adicionada à tabela 'super_admin_receivables'");
+    }
   }
 
   const hasProducts = await db.schema.hasTable("products");
