@@ -148,6 +148,7 @@ app.get("/api/super-admin/receivables", async (req, res) => {
       })),
       orders: detailedOrders,
     });
+    
   } catch (error) {
     console.error("❌ Erro no endpoint receivables:", error);
     res.status(500).json({
@@ -3241,6 +3242,7 @@ app.post("/api/ai/suggestion", async (req, res) => {
   if (!openai) {
     return res.json({ text: "IA indisponível" });
   }
+
   // --- Endpoint adicional: SuperAdmin marca recebíveis por IDs ---
   app.post(
     "/api/super-admin/receivables/mark-received-by-ids",
