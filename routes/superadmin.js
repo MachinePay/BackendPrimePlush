@@ -1,7 +1,7 @@
-const express = require("express");
+import express from "express";
+import knex from "knex";
+import path from "path";
 const router = express.Router();
-const knex = require("knex");
-const path = require("path");
 
 console.log("[DEBUG] superadmin.js carregado!");
 
