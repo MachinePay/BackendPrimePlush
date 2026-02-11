@@ -85,42 +85,39 @@ router.get("/super-admin/receivables", superAdminAuth, async (req, res) => {
       .orderBy("timestamp", "desc");
 
     let totalBrutoReceber = 0;
-    const detailedOrders = [];
-
-    for (const order of paidOrders) {
-      let items = [];
+    const history = [];
+    for (const h of historyRows) {
+      let orderIds = [];
       try {
-        items = Array.isArray(order.items) ? order.items : JSON.parse(order.items || "[]");
-      } catch (e) { items = []; }
-
-      const detailedItems = [];
-      for (const item of items) {
-        let precoBruto = 0;
-        const prodId = item.productId || item.id;
-        
-        if (prodId) {
-          const prod = await db("products").where({ id: prodId }).first();
-          precoBruto = prod && prod.priceRaw ? parseFloat(prod.priceRaw) : 0;
-        } else if (item.precoBruto !== undefined) {
-          precoBruto = parseFloat(item.precoBruto);
+        orderIds = h.order_ids ? JSON.parse(h.order_ids) : [];
+      } catch { orderIds = []; }
+      orderIds = Array.isArray(orderIds)
+        ? orderIds.filter(id => typeof id === 'string' && id.length > 0)
+        : [];
+      if (orderIds.length > 0) {
+        const orders = await db("orders").whereIn("id", orderIds);
+        for (const o of orders) {
+          history.push({
+            repasseId: h.id,
+            pedidoId: o.id,
+            cliente: "", // deve ser enviado pelo frontend
+            valorTotal: parseFloat(h.amount), // valor do repasse
+            dataPedido: o.timestamp,
+            dataRepasse: o.dataRepasseSuperAdmin || h.received_at || null,
+          });
         }
-
-        const price = Number(item.price) || 0;
-        const quantity = Number(item.quantity) || 1;
-        const valueToReceive = (price - precoBruto) * quantity;
-
-        detailedItems.push({
-          name: item.name || "",
-          price,
-          precoBruto,
-          quantity,
-          valueToReceive,
+      } else {
+        // Caso não haja pedidos, ainda retorna o repasse
+        history.push({
+          repasseId: h.id,
+          pedidoId: "-",
+          cliente: "",
+          valorTotal: parseFloat(h.amount),
+          dataPedido: "-",
+          dataRepasse: h.received_at || null,
         });
       }
-
-      const orderValueToReceive = detailedItems.reduce((sum, i) => sum + i.valueToReceive, 0);
-      totalBrutoReceber += orderValueToReceive;
-
+    }
       detailedOrders.push({
         id: order.id,
         timestamp: order.timestamp,
