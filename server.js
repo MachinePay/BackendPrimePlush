@@ -172,10 +172,30 @@ app.post("/api/super-admin/receivables/mark-received", async (req, res) => {
       });
     }
 
-    // Calcula o valor líquido à receber: soma dos pedidos pagos/autorizados menos o que já foi recebido
+
+    // Buscar todos os order_ids já recebidos
+    const receivablesRows = await db("super_admin_receivables").select("order_ids");
+    let receivedOrderIds = [];
+    for (const row of receivablesRows) {
+      if (row.order_ids) {
+        try {
+          const ids = JSON.parse(row.order_ids);
+          if (Array.isArray(ids)) receivedOrderIds.push(...ids);
+        } catch {}
+      }
+    }
+    // Buscar apenas pedidos pagos/autorizados que ainda não foram recebidos
     const paidOrders = await db("orders")
       .whereIn("paymentStatus", ["paid", "authorized"])
+      .whereNotIn("id", receivedOrderIds)
       .select("id", "items");
+
+    if (paidOrders.length === 0) {
+      return res.status(400).json({
+        error: "Não há valores a receber no momento",
+      });
+    }
+
     let totalBrutoReceber = 0;
     for (const order of paidOrders) {
       let items = [];
@@ -201,23 +221,10 @@ app.post("/api/super-admin/receivables/mark-received", async (req, res) => {
         totalBrutoReceber += valueToReceive;
       }
     }
-    const totalAlreadyReceived = await db("super_admin_receivables")
-      .sum("amount as total")
-      .first();
-    const alreadyReceived = parseFloat(totalAlreadyReceived.total) || 0;
-    const toReceive = totalBrutoReceber - alreadyReceived;
 
-    if (toReceive <= 0) {
-      return res.status(400).json({
-        error: "Não há valores a receber no momento",
-      });
-    }
-
-    // Registra o valor e os IDs dos pedidos recebidos
-    const receivedOrderIds = paidOrders.map(o => o.id);
     await db("super_admin_receivables").insert({
-      amount: toReceive,
-      order_ids: JSON.stringify(receivedOrderIds),
+      amount: totalBrutoReceber,
+      order_ids: JSON.stringify(paidOrders.map(o => o.id)),
     });
 
     console.log(
