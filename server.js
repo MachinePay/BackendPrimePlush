@@ -228,13 +228,13 @@ app.post("/api/super-admin/receivables/mark-received", async (req, res) => {
     });
 
     console.log(
-      `✅ Super Admin marcou R$ ${toReceive.toFixed(2)} como recebido`,
+      `✅ Super Admin marcou R$ ${totalBrutoReceber.toFixed(2)} como recebido`,
     );
 
     res.json({
       success: true,
       message: "Recebimento registrado com sucesso",
-      amount: toReceive,
+      amount: totalBrutoReceber,
     });
   } catch (error) {
     console.error("❌ Erro ao marcar como recebido:", error);
