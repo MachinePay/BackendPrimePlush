@@ -221,6 +221,23 @@ app.post("/api/super-admin/receivables/mark-received", async (req, res) => {
   }
 });
 
+// Endpoint: contagem de pedidos dos últimos 30 dias
+app.get("/api/orders/last30days-count", async (req, res) => {
+  try {
+    const now = new Date();
+    const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+    const count = await db("orders")
+      .where("timestamp", ">=", thirtyDaysAgo.toISOString())
+      .count({ total: "id" })
+      .first();
+    res.json({ count: Number(count.total) || 0 });
+  } catch (err) {
+    console.error("Erro ao buscar contagem dos últimos 30 dias:", err);
+    res
+      .status(500)
+      .json({ error: "Erro ao buscar contagem dos últimos 30 dias" });
+  }
+});
 // --- Configurações ---
 const openai = process.env.OPENAI_API_KEY
   ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
