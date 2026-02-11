@@ -1,3 +1,4 @@
+
 // ...existing code...
 // ...existing code...
 // ...existing code...
@@ -4196,6 +4197,14 @@ app.put("/api/users/:id", async (req, res) => {
     console.error("Erro ao atualizar usuário:", e);
     res.status(500).json({ error: "Erro ao atualizar usuário" });
   }
+});
+
+// Dummy endpoint para Point Smart 2 (apenas evita erro 404)
+app.post("/api/point/configure", (req, res) => {
+  res.json({
+    success: true,
+    message: "Configuração de Point ignorada (dummy endpoint)",
+  });
 });
 
 // --- Inicialização ---
