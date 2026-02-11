@@ -224,9 +224,16 @@ app.post("/api/super-admin/receivables/mark-received", async (req, res) => {
       }
     }
 
+    // Marca pedidos como recebidos (permanente)
+    const now = new Date().toISOString();
+    const orderIds = paidOrders.map(o => o.id);
+    await db("orders")
+      .whereIn("id", orderIds)
+      .update({ repassadoSuperAdmin: 1, dataRepasseSuperAdmin: now });
+
     await db("super_admin_receivables").insert({
       amount: totalBrutoReceber,
-      order_ids: JSON.stringify(paidOrders.map(o => o.id)),
+      order_ids: JSON.stringify(orderIds),
     });
 
     console.log(
@@ -237,6 +244,8 @@ app.post("/api/super-admin/receivables/mark-received", async (req, res) => {
       success: true,
       message: "Recebimento registrado com sucesso",
       amount: totalBrutoReceber,
+      receivedOrderIds: orderIds,
+      dataRepasse: now,
     });
   } catch (error) {
     console.error("❌ Erro ao marcar como recebido:", error);
