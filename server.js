@@ -48,11 +48,12 @@ app.get("/api/super-admin/receivables", async (req, res) => {
       });
     }
 
-
     // Buscar todos os pedidos pagos (valor bruto acumulado)
     // Filtrar para não mostrar pedidos já recebidos
     // 1. Buscar todos os order_ids já recebidos
-    const receivablesRows = await db("super_admin_receivables").select("order_ids");
+    const receivablesRows = await db("super_admin_receivables").select(
+      "order_ids",
+    );
     let receivedOrderIds = [];
     for (const row of receivablesRows) {
       if (row.order_ids) {
@@ -149,7 +150,6 @@ app.get("/api/super-admin/receivables", async (req, res) => {
       })),
       orders: detailedOrders,
     });
-    
   } catch (error) {
     console.error("❌ Erro no endpoint receivables:", error);
     res.status(500).json({
@@ -174,9 +174,10 @@ app.post("/api/super-admin/receivables/mark-received", async (req, res) => {
       });
     }
 
-
     // Buscar todos os order_ids já recebidos
-    const receivablesRows = await db("super_admin_receivables").select("order_ids");
+    const receivablesRows = await db("super_admin_receivables").select(
+      "order_ids",
+    );
     let receivedOrderIds = [];
     for (const row of receivablesRows) {
       if (row.order_ids) {
@@ -233,7 +234,7 @@ app.post("/api/super-admin/receivables/mark-received", async (req, res) => {
 
     await db("super_admin_receivables").insert({
       amount: totalBrutoReceber,
-      order_ids: JSON.stringify(orderIds),
+      order_ids: JSON.stringify(paidOrders.map(o => o.id)),
     });
 
     console.log(
@@ -479,12 +480,17 @@ async function initDatabase() {
     console.log("✅ Tabela 'super_admin_receivables' criada com sucesso");
   } else {
     // Adiciona a coluna order_ids se não existir
-    const hasOrderIds = await db.schema.hasColumn("super_admin_receivables", "order_ids");
+    const hasOrderIds = await db.schema.hasColumn(
+      "super_admin_receivables",
+      "order_ids",
+    );
     if (!hasOrderIds) {
       await db.schema.alterTable("super_admin_receivables", (table) => {
         table.text("order_ids");
       });
-      console.log("✅ Coluna 'order_ids' adicionada à tabela 'super_admin_receivables'");
+      console.log(
+        "✅ Coluna 'order_ids' adicionada à tabela 'super_admin_receivables'",
+      );
     }
   }
 
@@ -3177,70 +3183,70 @@ app.get("/api/point/status", async (req, res) => {
 });
 
 // Limpar TODA a fila de pagamentos da maquininha (chamar após pagamento aprovado)
-app.post("/api/payment/clear-queue", async (req, res) => {
-  // Usa apenas credenciais globais (single-tenant)
-  const MP_ACCESS_TOKEN_LOCAL = MP_ACCESS_TOKEN;
-  const MP_DEVICE_ID_LOCAL = MP_DEVICE_ID;
+// app.post("/api/payment/clear-queue", async (req, res) => {
+//   // Usa apenas credenciais globais (single-tenant)
+//   const MP_ACCESS_TOKEN_LOCAL = MP_ACCESS_TOKEN;
+//   const MP_DEVICE_ID_LOCAL = MP_DEVICE_ID;
 
-  if (!MP_ACCESS_TOKEN_LOCAL || !MP_DEVICE_ID_LOCAL) {
-    return res.json({ success: true, cleared: 0 });
-  }
+//   if (!MP_ACCESS_TOKEN_LOCAL || !MP_DEVICE_ID_LOCAL) {
+//     return res.json({ success: true, cleared: 0 });
+//   }
 
-  try {
-    console.log(`🧹 [CLEAR QUEUE] Limpando TODA a fila da Point Pro 2...`);
+//   try {
+//     console.log(`🧹 [CLEAR QUEUE] Limpando TODA a fila da Point Pro 2...`);
 
-    const listUrl = `https://api.mercadopago.com/point/integration-api/devices/${MP_DEVICE_ID_LOCAL}/payment-intents`;
-    const listResp = await fetch(listUrl, {
-      headers: { Authorization: `Bearer ${MP_ACCESS_TOKEN_LOCAL}` },
-    });
+//     const listUrl = `https://api.mercadopago.com/point/integration-api/devices/${MP_DEVICE_ID_LOCAL}/payment-intents`;
+//     const listResp = await fetch(listUrl, {
+//       headers: { Authorization: `Bearer ${MP_ACCESS_TOKEN_LOCAL}` },
+//     });
 
-    if (!listResp.ok) {
-      return res.json({ success: false, error: "Erro ao listar intents" });
-    }
+//     if (!listResp.ok) {
+//       return res.json({ success: false, error: "Erro ao listar intents" });
+//     }
 
-    const listData = await listResp.json();
-    const events = listData.events || [];
+//     const listData = await listResp.json();
+//     const events = listData.events || [];
 
-    console.log(`🔍 Encontradas ${events.length} intent(s) na fila`);
+//     console.log(`🔍 Encontradas ${events.length} intent(s) na fila`);
 
-    let cleared = 0;
+//     let cleared = 0;
 
-    for (const ev of events) {
-      const iId = ev.payment_intent_id || ev.id;
-      const state = ev.state;
+//     for (const ev of events) {
+//       const iId = ev.payment_intent_id || ev.id;
+//       const state = ev.state;
 
-      try {
-        const delResp = await fetch(`${listUrl}/${iId}`, {
-          method: "DELETE",
-          headers: { Authorization: `Bearer ${MP_ACCESS_TOKEN_LOCAL}` },
-        });
+//       try {
+//         const delResp = await fetch(`${listUrl}/${iId}`, {
+//           method: "DELETE",
+//           headers: { Authorization: `Bearer ${MP_ACCESS_TOKEN_LOCAL}` },
+//         });
 
-        if (delResp.ok || delResp.status === 404) {
-          console.log(`  ✅ Intent ${iId} (${state}) removida`);
-          cleared++;
-        }
-      } catch (e) {
-        console.log(`  ⚠️ Erro ao remover ${iId}: ${e.message}`);
-      }
+//         if (delResp.ok || delResp.status === 404) {
+//           console.log(`  ✅ Intent ${iId} (${state}) removida`);
+//           cleared++;
+//         }
+//       } catch (e) {
+//         console.log(`  ⚠️ Erro ao remover ${iId}: ${e.message}`);
+//       }
 
-      // Pequeno delay entre remoções
-      await new Promise((r) => setTimeout(r, 200));
-    }
+//       // Pequeno delay entre remoções
+//       await new Promise((r) => setTimeout(r, 200));
+//     }
 
-    console.log(
-      `✅ [CLEAR QUEUE] ${cleared} intent(s) removida(s) - Point Pro 2 completamente limpa!`,
-    );
+//     console.log(
+//       `✅ [CLEAR QUEUE] ${cleared} intent(s) removida(s) - Point Pro 2 completamente limpa!`,
+//     );
 
-    res.json({
-      success: true,
-      cleared: cleared,
-      message: `${cleared} pagamento(s) removido(s) da fila`,
-    });
-  } catch (error) {
-    console.error("❌ Erro ao limpar fila:", error.message);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
+//     res.json({
+//       success: true,
+//       cleared: cleared,
+//       message: `${cleared} pagamento(s) removido(s) da fila`,
+//     });
+//   } catch (error) {
+//     console.error("❌ Erro ao limpar fila:", error.message);
+//     res.status(500).json({ success: false, error: error.message });
+//   }
+// });
 
 // ============================================================================
 // FIM DA SEÇÃO DEPRECATED
@@ -3253,61 +3259,69 @@ app.post("/api/ai/suggestion", async (req, res) => {
     return res.json({ text: "IA indisponível" });
   }
 
-
-
-// --- Endpoint adicional: SuperAdmin marca recebíveis por IDs ---
-app.post(
-  "/api/super-admin/receivables/mark-received-by-ids",
-  async (req, res) => {
-    try {
-      const superAdminPassword = req.headers["x-super-admin-password"];
-      if (!SUPER_ADMIN_PASSWORD) {
-        return res
-          .status(503)
-          .json({ error: "Super Admin não configurado." });
-      }
-      if (superAdminPassword !== SUPER_ADMIN_PASSWORD) {
-        return res
-          .status(401)
-          .json({ error: "Acesso negado. Senha de Super Admin inválida." });
-      }
-
-      let { orderIds } = req.body;
-      if (!orderIds || !Array.isArray(orderIds) || orderIds.length === 0) {
-        return res
-          .status(400)
-          .json({ error: "orderIds obrigatório (array)" });
-      }
-
-      const now = new Date().toISOString();
-      const updateResult = await db("orders")
-        .whereIn("id", orderIds)
-        .update({ repassadoSuperAdmin: 1, dataRepasseSuperAdmin: now });
-
+  // --- Endpoint adicional: SuperAdmin marca recebíveis por IDs ---
+  app.post(
+    "/api/super-admin/receivables/mark-received-by-ids",
+    async (req, res) => {
       console.log(
-        "[DEBUG] SuperAdmin marcou recebíveis por IDs:",
-        orderIds,
-        "Data:",
-        now,
-        "Resultado:",
-        updateResult,
+        "[LOG] POST /api/super-admin/receivables/mark-received-by-ids chamado",
       );
+      console.log("[LOG] Headers:", req.headers);
+      console.log("[LOG] Body:", req.body);
+      try {
+        const superAdminPassword = req.headers["x-super-admin-password"];
+        console.log("[LOG] superAdminPassword recebido:", superAdminPassword);
+        if (!SUPER_ADMIN_PASSWORD) {
+          return res
+            .status(503)
+            .json({ error: "Super Admin não configurado." });
+        }
+        if (superAdminPassword !== SUPER_ADMIN_PASSWORD) {
+          return res
+            .status(401)
+            .json({ error: "Acesso negado. Senha de Super Admin inválida." });
+        }
 
-      return res.json({
-        success: true,
-        message: "Recebíveis marcados como recebidos",
-        receivedOrderIds: orderIds,
-        dataRepasse: now,
-        updateResult,
-      });
-    } catch (err) {
-      console.log("[DEBUG] Erro interno:", err);
-      return res
-        .status(500)
-        .json({ error: "Erro interno", details: err.message });
-    }
-  },
-);
+        let { orderIds } = req.body;
+        console.log("[LOG] orderIds recebido:", orderIds);
+        if (!orderIds || !Array.isArray(orderIds) || orderIds.length === 0) {
+          return res
+            .status(400)
+            .json({ error: "orderIds obrigatório (array)" });
+        }
+
+        const now = new Date().toISOString();
+        console.log("[LOG] Data de repasse:", now);
+        const updateResult = await db("orders")
+          .whereIn("id", orderIds)
+          .update({ repassadoSuperAdmin: 1, dataRepasseSuperAdmin: now });
+
+        console.log(
+          "[DEBUG] SuperAdmin marcou recebíveis por IDs:",
+          orderIds,
+          "Data:",
+          now,
+          "Resultado:",
+          updateResult,
+        );
+
+        console.log("[LOG] updateResult:", updateResult);
+        return res.json({
+          success: true,
+          message: "Recebíveis marcados como recebidos",
+          receivedOrderIds: orderIds,
+          dataRepasse: now,
+          updateResult,
+        });
+      } catch (err) {
+        console.log("[DEBUG] Erro interno:", err);
+        console.log("[LOG] Erro interno:", err);
+        return res
+          .status(500)
+          .json({ error: "Erro interno", details: err.message });
+      }
+    },
+  );
   try {
     // Busca todos os produtos disponíveis
     const products = await db("products").select(
