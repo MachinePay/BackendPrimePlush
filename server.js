@@ -3068,110 +3068,110 @@ app.post("/api/payment/clear-all", async (req, res) => {
 });
 
 // Configurar Point Smart 2 (modo operacional e vinculação)
-app.post("/api/point/configure", async (req, res) => {
-  // Usa apenas credenciais globais (single-tenant)
-  const MP_ACCESS_TOKEN_LOCAL = MP_ACCESS_TOKEN;
-  const MP_DEVICE_ID_LOCAL = MP_DEVICE_ID;
+// app.post("/api/point/configure", async (req, res) => {
+//   // Usa apenas credenciais globais (single-tenant)
+//   const MP_ACCESS_TOKEN_LOCAL = MP_ACCESS_TOKEN;
+//   const MP_DEVICE_ID_LOCAL = MP_DEVICE_ID;
 
-  if (!MP_ACCESS_TOKEN_LOCAL || !MP_DEVICE_ID_LOCAL) {
-    return res.json({ success: false, error: "Credenciais não configuradas" });
-  }
+//   if (!MP_ACCESS_TOKEN_LOCAL || !MP_DEVICE_ID_LOCAL) {
+//     return res.json({ success: false, error: "Credenciais não configuradas" });
+//   }
 
-  try {
-    console.log(`⚙️ Configurando Point Smart 2: ${MP_DEVICE_ID_LOCAL}`);
+//   try {
+//     console.log(`⚙️ Configurando Point  2: ${MP_DEVICE_ID_LOCAL}`);
 
-    // Configuração do dispositivo Point Smart
-    const configUrl = `https://api.mercadopago.com/point/integration-api/devices/${MP_DEVICE_ID_LOCAL}`;
+//     // Configuração do dispositivo Point Smart
+//     const configUrl = `https://api.mercadopago.com/point/integration-api/devices/${MP_DEVICE_ID_LOCAL}`;
 
-    const configPayload = {
-      operating_mode: "PDV", // Modo PDV - integração com frente de caixa
-      // Isso mantém a Point vinculada e bloqueia acesso ao menu
-    };
+//     const configPayload = {
+//       operating_mode: "PDV", // Modo PDV - integração com frente de caixa
+//       // Isso mantém a Point vinculada e bloqueia acesso ao menu
+//     };
 
-    const response = await fetch(configUrl, {
-      method: "PATCH",
-      headers: {
-        Authorization: `Bearer ${MP_ACCESS_TOKEN_LOCAL}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(configPayload),
-    });
+//     const response = await fetch(configUrl, {
+//       method: "PATCH",
+//       headers: {
+//         Authorization: `Bearer ${MP_ACCESS_TOKEN_LOCAL}`,
+//         "Content-Type": "application/json",
+//       },
+//       body: JSON.stringify(configPayload),
+//     });
 
-    if (response.ok) {
-      const data = await response.json();
-      console.log(`✅ Point Smart 2 configurada em modo PDV`);
-      console.log(`🔒 Menu bloqueado - apenas pagamentos via API`);
+//     if (response.ok) {
+//       const data = await response.json();
+//       console.log(`✅ Point Smart 2 configurada em modo PDV`);
+//       console.log(`🔒 Menu bloqueado - apenas pagamentos via API`);
 
-      return res.json({
-        success: true,
-        message: "Point configurada com sucesso",
-        mode: "PDV",
-        device: data,
-      });
-    } else {
-      const error = await response.json();
-      console.error(`❌ Erro ao configurar Point:`, error);
-      return res.status(400).json({ success: false, error: error.message });
-    }
-  } catch (error) {
-    console.error("❌ Erro ao configurar Point Smart 2:", error.message);
-    res.status(500).json({ success: false, error: error.message });
-  }
-});
+//       return res.json({
+//         success: true,
+//         message: "Point configurada com sucesso",
+//         mode: "PDV",
+//         device: data,
+//       });
+//     } else {
+//       const error = await response.json();
+//       console.error(`❌ Erro ao configurar Point:`, error);
+//       return res.status(400).json({ success: false, error: error.message });
+//     }
+//   } catch (error) {
+//     console.error("❌ Erro ao configurar Point Smart 2:", error.message);
+//     res.status(500).json({ success: false, error: error.message });
+//   }
+// });
 
-// Verificar status da Point Smart 2
-app.get("/api/point/status", async (req, res) => {
-  // Usa apenas credenciais globais (single-tenant)
-  const MP_ACCESS_TOKEN_LOCAL = MP_ACCESS_TOKEN;
-  const MP_DEVICE_ID_LOCAL = MP_DEVICE_ID;
+// // Verificar status da Point Smart 2
+// app.get("/api/point/status", async (req, res) => {
+//   // Usa apenas credenciais globais (single-tenant)
+//   const MP_ACCESS_TOKEN_LOCAL = MP_ACCESS_TOKEN;
+//   const MP_DEVICE_ID_LOCAL = MP_DEVICE_ID;
 
-  if (!MP_ACCESS_TOKEN_LOCAL || !MP_DEVICE_ID_LOCAL) {
-    console.error("⚠️ Status Point: Credenciais não configuradas");
-    console.error(
-      `MP_ACCESS_TOKEN: ${MP_ACCESS_TOKEN_LOCAL ? "OK" : "AUSENTE"}`,
-    );
-    console.error(`MP_DEVICE_ID: ${MP_DEVICE_ID_LOCAL || "AUSENTE"}`);
-    return res.json({
-      connected: false,
-      error: "Credenciais não configuradas",
-    });
-  }
+//   if (!MP_ACCESS_TOKEN_LOCAL || !MP_DEVICE_ID_LOCAL) {
+//     console.error("⚠️ Status Point: Credenciais não configuradas");
+//     console.error(
+//       `MP_ACCESS_TOKEN: ${MP_ACCESS_TOKEN_LOCAL ? "OK" : "AUSENTE"}`,
+//     );
+//     console.error(`MP_DEVICE_ID: ${MP_DEVICE_ID_LOCAL || "AUSENTE"}`);
+//     return res.json({
+//       connected: false,
+//       error: "Credenciais não configuradas",
+//     });
+//   }
 
-  try {
-    console.log(`🔍 Verificando status da Point: ${MP_DEVICE_ID_LOCAL}`);
+//   try {
+//     console.log(`🔍 Verificando status da Point: ${MP_DEVICE_ID_LOCAL}`);
 
-    const deviceUrl = `https://api.mercadopago.com/point/integration-api/devices/${MP_DEVICE_ID_LOCAL}`;
-    const response = await fetch(deviceUrl, {
-      headers: { Authorization: `Bearer ${MP_ACCESS_TOKEN_LOCAL}` },
-    });
+//     const deviceUrl = `https://api.mercadopago.com/point/integration-api/devices/${MP_DEVICE_ID_LOCAL}`;
+//     const response = await fetch(deviceUrl, {
+//       headers: { Authorization: `Bearer ${MP_ACCESS_TOKEN_LOCAL}` },
+//     });
 
-    console.log(`📡 Resposta API Point: Status ${response.status}`);
+//     console.log(`📡 Resposta API Point: Status ${response.status}`);
 
-    if (response.ok) {
-      const device = await response.json();
-      console.log(`✅ Point encontrada:`, device);
+//     if (response.ok) {
+//       const device = await response.json();
+//       console.log(`✅ Point encontrada:`, device);
 
-      return res.json({
-        connected: true,
-        id: device.id,
-        operating_mode: device.operating_mode,
-        status: device.status,
-        model: device.model || "Point Smart 2",
-      });
-    } else {
-      const errorData = await response.json();
-      console.error(`❌ Erro ao buscar Point:`, errorData);
-      return res.json({
-        connected: false,
-        error: "Point não encontrada",
-        details: errorData,
-      });
-    }
-  } catch (error) {
-    console.error("❌ Exceção ao verificar Point:", error);
-    res.status(500).json({ connected: false, error: error.message });
-  }
-});
+//       return res.json({
+//         connected: true,
+//         id: device.id,
+//         operating_mode: device.operating_mode,
+//         status: device.status,
+//         model: device.model || "Point Smart 2",
+//       });
+//     } else {
+//       const errorData = await response.json();
+//       console.error(`❌ Erro ao buscar Point:`, errorData);
+//       return res.json({
+//         connected: false,
+//         error: "Point não encontrada",
+//         details: errorData,
+//       });
+//     }
+//   } catch (error) {
+//     console.error("❌ Exceção ao verificar Point:", error);
+//     res.status(500).json({ connected: false, error: error.message });
+//   }
+// });
 
 // Limpar TODA a fila de pagamentos da maquininha (chamar após pagamento aprovado)
 // app.post("/api/payment/clear-queue", async (req, res) => {
@@ -3292,7 +3292,6 @@ ${productList}
 
     const aiResponse = completion.choices[0].message.content;
     return res.json({ text: aiResponse });
-
   } catch (e) {
     console.error("[ERRO AI]:", e);
     return res.json({ text: "Sugestão indisponível no momento." });
@@ -3300,51 +3299,96 @@ ${productList}
 });
 
 // --- Rota 2: SuperAdmin (Marca recebíveis) ---
-app.post("/api/super-admin/receivables/mark-received-by-ids", async (req, res) => {
-  console.log("[LOG] POST /api/super-admin/receivables/mark-received-by-ids chamado");
-  
-  try {
-    const superAdminPassword = req.headers["x-super-admin-password"];
-    
-    if (!SUPER_ADMIN_PASSWORD) {
-      return res.status(503).json({ error: "Super Admin não configurado." });
-    }
+app.post(
+  "/api/super-admin/receivables/mark-received-by-ids",
+  async (req, res) => {
+    console.log(
+      "[LOG] POST /api/super-admin/receivables/mark-received-by-ids chamado",
+    );
 
-    if (superAdminPassword !== SUPER_ADMIN_PASSWORD) {
-      return res.status(401).json({ error: "Acesso negado. Senha inválida." });
-    }
+    try {
+      const superAdminPassword = req.headers["x-super-admin-password"];
 
-    let { orderIds } = req.body;
-    if (!orderIds || !Array.isArray(orderIds) || orderIds.length === 0) {
-      return res.status(400).json({ error: "orderIds obrigatório (array)" });
-    }
+      if (!SUPER_ADMIN_PASSWORD) {
+        return res.status(503).json({ error: "Super Admin não configurado." });
+      }
 
-    const now = new Date().toISOString();
-    const updateResult = await db("orders")
-      .whereIn("id", orderIds)
-      .update({ 
-        repassadoSuperAdmin: 1, 
-        dataRepasseSuperAdmin: now 
+      if (superAdminPassword !== SUPER_ADMIN_PASSWORD) {
+        return res
+          .status(401)
+          .json({ error: "Acesso negado. Senha inválida." });
+      }
+
+      let { orderIds } = req.body;
+      if (!orderIds || !Array.isArray(orderIds) || orderIds.length === 0) {
+        return res.status(400).json({ error: "orderIds obrigatório (array)" });
+      }
+
+      const now = new Date().toISOString();
+      const updateResult = await db("orders").whereIn("id", orderIds).update({
+        repassadoSuperAdmin: 1,
+        dataRepasseSuperAdmin: now,
       });
 
-    console.log("[DEBUG] Resultado do Update:", updateResult);
+      // Calcula o valor total a receber desses pedidos
+      const orders = await db("orders").whereIn("id", orderIds);
+      let totalBrutoReceber = 0;
+      for (const order of orders) {
+        let items = [];
+        try {
+          items = Array.isArray(order.items)
+            ? order.items
+            : JSON.parse(order.items);
+        } catch {
+          items = [];
+        }
+        for (const item of items) {
+          let precoBruto = 0;
+          const prodId = item.productId || item.id;
+          if (prodId) {
+            const prod = await db("products").where({ id: prodId }).first();
+            precoBruto = prod && prod.priceRaw ? parseFloat(prod.priceRaw) : 0;
+          } else if (item.precoBruto !== undefined) {
+            precoBruto = parseFloat(item.precoBruto);
+          }
+          const price = Number(item.price) || 0;
+          const quantity = Number(item.quantity) || 1;
+          const valueToReceive = (price - precoBruto) * quantity;
+          totalBrutoReceber += valueToReceive;
+        }
+      }
 
-    return res.json({
-      success: true,
-      message: "Recebíveis marcados como recebidos",
-      receivedOrderIds: orderIds,
-      dataRepasse: now,
-      updateResult,
-    });
+      // Insere registro na tabela de recebíveis
+      await db("super_admin_receivables").insert({
+        amount: totalBrutoReceber,
+        order_ids: JSON.stringify(orderIds),
+        created_at: now,
+      });
 
-  } catch (err) {
-    console.error("[LOG] Erro interno:", err);
-    return res.status(500).json({ 
-      error: "Erro interno", 
-      details: err.message 
-    });
-  }
-});
+      console.log(
+        "[DEBUG] Resultado do Update:",
+        updateResult,
+        "Total Recebido:",
+        totalBrutoReceber,
+      );
+
+      return res.json({
+        success: true,
+        message: "Recebíveis marcados como recebidos",
+        receivedOrderIds: orderIds,
+        dataRepasse: now,
+        updateResult,
+        totalRecebido: totalBrutoReceber,
+      });
+    } catch (err) {
+      console.error("[LOG] Erro interno:", err);
+      return res.status(500).json({
+        error: "Erro interno",
+        details: err.message,
+      });
+    }
+  },
+);
 
 app.post("/api/ai/chat", async (req, res) => {
   if (!openai) {
