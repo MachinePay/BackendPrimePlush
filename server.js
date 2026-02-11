@@ -3259,51 +3259,26 @@ app.post(
           .json({ error: "orderIds obrigatório (array)" });
       }
 
-      // Calcular o valor total dos pedidos recebidos
-      let totalAmount = 0;
-      const orders = await db("orders")
+      const now = new Date().toISOString();
+      const updateResult = await db("orders")
         .whereIn("id", orderIds)
-        .select("id", "items");
-      for (const order of orders) {
-        let items = [];
-        try {
-          items = Array.isArray(order.items) ? order.items : JSON.parse(order.items);
-        } catch {
-          items = [];
-        }
-        for (const item of items) {
-          let precoBruto = 0;
-          const prodId = item.productId || item.id;
-          if (prodId) {
-            const prod = await db("products").where({ id: prodId }).first();
-            precoBruto = prod && prod.priceRaw ? parseFloat(prod.priceRaw) : 0;
-          } else if (item.precoBruto !== undefined) {
-            precoBruto = parseFloat(item.precoBruto);
-          }
-          const price = Number(item.price) || 0;
-          const quantity = Number(item.quantity) || 1;
-          const valueToReceive = (price - precoBruto) * quantity;
-          totalAmount += valueToReceive;
-        }
-      }
+        .update({ repassadoSuperAdmin: 1, dataRepasseSuperAdmin: now });
 
-      // Salva registro na tabela super_admin_receivables
-      await db("super_admin_receivables").insert({
-        amount: totalAmount,
-        order_ids: JSON.stringify(orderIds),
-        received_at: new Date().toISOString(),
-      });
-
-      // Marca os pedidos como repassados
-      await db("orders")
-        .whereIn("id", orderIds)
-        .update({ repassadoSuperAdmin: 1, dataRepasseSuperAdmin: new Date().toISOString() });
+      console.log(
+        "[DEBUG] SuperAdmin marcou recebíveis por IDs:",
+        orderIds,
+        "Data:",
+        now,
+        "Resultado:",
+        updateResult,
+      );
 
       return res.json({
         success: true,
         message: "Recebíveis marcados como recebidos",
         receivedOrderIds: orderIds,
-        amount: totalAmount,
+        dataRepasse: now,
+        updateResult,
       });
     } catch (err) {
       console.log("[DEBUG] Erro interno:", err);
