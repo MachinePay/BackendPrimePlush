@@ -39,6 +39,7 @@ router.post(
         .json({ error: "Erro interno", details: err.message });
     }
   },
+            console.log("[DEBUG] Endpoint POST /super-admin/receivables/mark-received chamado!");
 );
 
 // Endpoint detalhado para recebíveis do SuperAdmin
