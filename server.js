@@ -2,7 +2,6 @@
 // ...existing code...
 // Atualizar informações do usuário (incluindo senha)
 
-
 import { sendOrderPdfEmail } from "./services/orderPdfEmail.js";
 import express from "express";
 import fs from "fs/promises";
@@ -64,7 +63,9 @@ app.get("/api/super-admin/receivables", async (req, res) => {
     for (const order of paidOrders) {
       let items = [];
       try {
-        items = Array.isArray(order.items) ? order.items : JSON.parse(order.items);
+        items = Array.isArray(order.items)
+          ? order.items
+          : JSON.parse(order.items);
       } catch {
         items = [];
       }
@@ -84,14 +85,17 @@ app.get("/api/super-admin/receivables", async (req, res) => {
         const quantity = Number(item.quantity) || 1;
         const valueToReceive = (price - precoBruto) * quantity;
         detailedItems.push({
-          name: item.name || '',
+          name: item.name || "",
           price,
           precoBruto,
           quantity,
-          valueToReceive
+          valueToReceive,
         });
       }
-      const orderValueToReceive = detailedItems.reduce((sum, i) => sum + i.valueToReceive, 0);
+      const orderValueToReceive = detailedItems.reduce(
+        (sum, i) => sum + i.valueToReceive,
+        0,
+      );
       totalBrutoReceber += orderValueToReceive;
       detailedOrders.push({
         id: order.id,
@@ -102,7 +106,7 @@ app.get("/api/super-admin/receivables", async (req, res) => {
         items: detailedItems,
         status: order.status,
         paymentType: order.paymentType,
-        paymentStatus: order.paymentStatus
+        paymentStatus: order.paymentStatus,
       });
     }
 
@@ -127,7 +131,7 @@ app.get("/api/super-admin/receivables", async (req, res) => {
         amount: parseFloat(h.amount),
         date: h.received_at,
       })),
-      orders: detailedOrders
+      orders: detailedOrders,
     });
   } catch (error) {
     console.error("❌ Erro no endpoint receivables:", error);
@@ -161,7 +165,9 @@ app.post("/api/super-admin/receivables/mark-received", async (req, res) => {
     for (const order of paidOrders) {
       let items = [];
       try {
-        items = Array.isArray(order.items) ? order.items : JSON.parse(order.items);
+        items = Array.isArray(order.items)
+          ? order.items
+          : JSON.parse(order.items);
       } catch {
         items = [];
       }
@@ -1383,9 +1389,7 @@ app.post("/api/orders", async (req, res) => {
         ? items.map((item) => ({
             ...item,
             precoBruto:
-              item.precoBruto !== undefined
-                ? Number(item.precoBruto)
-                : 0,
+              item.precoBruto !== undefined ? Number(item.precoBruto) : 0,
           }))
         : [];
 
@@ -1669,10 +1673,11 @@ app.get("/api/orders/history", async (req, res) => {
     const { start, end } = req.query;
     let query = db("orders")
       .where(function () {
-        this.whereIn("paymentStatus", ["paid", "authorized"])
-          .orWhere(function () {
+        this.whereIn("paymentStatus", ["paid", "authorized"]).orWhere(
+          function () {
             this.where("paymentType", "presencial");
-          });
+          },
+        );
       })
       .orderBy("timestamp", "desc");
     if (start) query = query.where("timestamp", ">=", start);
@@ -3185,6 +3190,59 @@ app.post("/api/ai/suggestion", async (req, res) => {
   if (!openai) {
     return res.json({ text: "IA indisponível" });
   }
+  // --- Endpoint adicional: SuperAdmin marca recebíveis por IDs ---
+  app.post(
+    "/api/super-admin/receivables/mark-received-by-ids",
+    async (req, res) => {
+      try {
+        const superAdminPassword = req.headers["x-super-admin-password"];
+        if (!SUPER_ADMIN_PASSWORD) {
+          return res
+            .status(503)
+            .json({ error: "Super Admin não configurado." });
+        }
+        if (superAdminPassword !== SUPER_ADMIN_PASSWORD) {
+          return res
+            .status(401)
+            .json({ error: "Acesso negado. Senha de Super Admin inválida." });
+        }
+
+        let { orderIds } = req.body;
+        if (!orderIds || !Array.isArray(orderIds) || orderIds.length === 0) {
+          return res
+            .status(400)
+            .json({ error: "orderIds obrigatório (array)" });
+        }
+
+        const now = new Date().toISOString();
+        const updateResult = await db("orders")
+          .whereIn("id", orderIds)
+          .update({ repassadoSuperAdmin: 1, dataRepasseSuperAdmin: now });
+
+        console.log(
+          "[DEBUG] SuperAdmin marcou recebíveis por IDs:",
+          orderIds,
+          "Data:",
+          now,
+          "Resultado:",
+          updateResult,
+        );
+
+        return res.json({
+          success: true,
+          message: "Recebíveis marcados como recebidos",
+          receivedOrderIds: orderIds,
+          dataRepasse: now,
+          updateResult,
+        });
+      } catch (err) {
+        console.log("[DEBUG] Erro interno:", err);
+        return res
+          .status(500)
+          .json({ error: "Erro interno", details: err.message });
+      }
+    },
+  );
   try {
     // Busca todos os produtos disponíveis
     const products = await db("products").select(
