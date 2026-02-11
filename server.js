@@ -3068,178 +3068,176 @@ app.post("/api/payment/clear-all", async (req, res) => {
 });
 
 // Configurar Point Smart 2 (modo operacional e vinculação)
-// --- INTEGRAÇÃO POINT SMART 2 DESATIVADA ---
-// app.post("/api/point/configure", async (req, res) => {
-//   // Usa apenas credenciais globais (single-tenant)
-//   const MP_ACCESS_TOKEN_LOCAL = MP_ACCESS_TOKEN;
-//   const MP_DEVICE_ID_LOCAL = MP_DEVICE_ID;
-//
-//   if (!MP_ACCESS_TOKEN_LOCAL || !MP_DEVICE_ID_LOCAL) {
-//     return res.json({ success: false, error: "Credenciais não configuradas" });
-//   }
-//
-//   try {
-//     console.log(`⚙️ Configurando Point Smart 2: ${MP_DEVICE_ID_LOCAL}`);
-//
-//     // Configuração do dispositivo Point Smart
-//     const configUrl = `https://api.mercadopago.com/point/integration-api/devices/${MP_DEVICE_ID_LOCAL}`;
-//
-//     const configPayload = {
-//       operating_mode: "PDV", // Modo PDV - integração com frente de caixa
-//       // Isso mantém a Point vinculada e bloqueia acesso ao menu
-//     };
-//
-//     const response = await fetch(configUrl, {
-//       method: "PATCH",
-//       headers: {
-//         Authorization: `Bearer ${MP_ACCESS_TOKEN_LOCAL}`,
-//         "Content-Type": "application/json",
-//       },
-//       body: JSON.stringify(configPayload),
-//     });
-//
-//     if (response.ok) {
-//       const data = await response.json();
-//       console.log(`✅ Point Smart 2 configurada em modo PDV`);
-//       console.log(`🔒 Menu bloqueado - apenas pagamentos via API`);
-//
-//       return res.json({
-//         success: true,
-//         message: "Point configurada com sucesso",
-//         mode: "PDV",
-//         device: data,
-//       });
-//     } else {
-//       const error = await response.json();
-//       console.error(`❌ Erro ao configurar Point:`, error);
-//       return res.status(400).json({ success: false, error: error.message });
-//     }
-//   } catch (error) {
-//     console.error("❌ Erro ao configurar Point Smart 2:", error.message);
-//     res.status(500).json({ success: false, error: error.message });
-//   }
-// });
-
-// Verificar status da Point Smart 2
-// --- INTEGRAÇÃO POINT SMART 2 DESATIVADA ---
-// app.get("/api/point/status", async (req, res) => {
-//   // Usa apenas credenciais globais (single-tenant)
-//   const MP_ACCESS_TOKEN_LOCAL = MP_ACCESS_TOKEN;
-//   const MP_DEVICE_ID_LOCAL = MP_DEVICE_ID;
-//
-//   if (!MP_ACCESS_TOKEN_LOCAL || !MP_DEVICE_ID_LOCAL) {
-//     console.error("⚠️ Status Point: Credenciais não configuradas");
-//     console.error(
-//       `MP_ACCESS_TOKEN: ${MP_ACCESS_TOKEN_LOCAL ? "OK" : "AUSENTE"}`,
-//     );
-//     console.error(`MP_DEVICE_ID: ${MP_DEVICE_ID_LOCAL || "AUSENTE"}`);
-//     return res.json({
-//       connected: false,
-//       error: "Credenciais não configuradas",
-//     });
-//   }
-//
-//   try {
-//     console.log(`🔍 Verificando status da Point: ${MP_DEVICE_ID_LOCAL}`);
-//
-//     const deviceUrl = `https://api.mercadopago.com/point/integration-api/devices/${MP_DEVICE_ID_LOCAL}`;
-//     const response = await fetch(deviceUrl, {
-//       headers: { Authorization: `Bearer ${MP_ACCESS_TOKEN_LOCAL}` },
-//     });
-//
-//     console.log(`📡 Resposta API Point: Status ${response.status}`);
-//
-//     if (response.ok) {
-//       const device = await response.json();
-//       console.log(`✅ Point encontrada:`, device);
-//
-//       return res.json({
-//         connected: true,
-//         id: device.id,
-//         operating_mode: device.operating_mode,
-//         status: device.status,
-//         model: device.model || "Point Smart 2",
-//       });
-//     } else {
-//       const errorData = await response.json();
-//       console.error(`❌ Erro ao buscar Point:`, errorData);
-//       return res.json({
-//         connected: false,
-//         error: "Point não encontrada",
-//         details: errorData,
-//       });
-//     }
-//   } catch (error) {
-//     console.error("❌ Exceção ao verificar Point:", error);
-//     res.status(500).json({ connected: false, error: error.message });
-//   }
-// });
-
-// Limpar TODA a fila de pagamentos da maquininha (chamar após pagamento aprovado)
-app.post("/api/payment/clear-queue", async (req, res) => {
+app.post("/api/point/configure", async (req, res) => {
   // Usa apenas credenciais globais (single-tenant)
   const MP_ACCESS_TOKEN_LOCAL = MP_ACCESS_TOKEN;
   const MP_DEVICE_ID_LOCAL = MP_DEVICE_ID;
 
   if (!MP_ACCESS_TOKEN_LOCAL || !MP_DEVICE_ID_LOCAL) {
-    return res.json({ success: true, cleared: 0 });
+    return res.json({ success: false, error: "Credenciais não configuradas" });
   }
 
   try {
-    console.log(`🧹 [CLEAR QUEUE] Limpando TODA a fila da Point Pro 2...`);
+    console.log(`⚙️ Configurando Point Smart 2: ${MP_DEVICE_ID_LOCAL}`);
 
-    const listUrl = `https://api.mercadopago.com/point/integration-api/devices/${MP_DEVICE_ID_LOCAL}/payment-intents`;
-    const listResp = await fetch(listUrl, {
-      headers: { Authorization: `Bearer ${MP_ACCESS_TOKEN_LOCAL}` },
+    // Configuração do dispositivo Point Smart
+    const configUrl = `https://api.mercadopago.com/point/integration-api/devices/${MP_DEVICE_ID_LOCAL}`;
+
+    const configPayload = {
+      operating_mode: "PDV", // Modo PDV - integração com frente de caixa
+      // Isso mantém a Point vinculada e bloqueia acesso ao menu
+    };
+
+    const response = await fetch(configUrl, {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${MP_ACCESS_TOKEN_LOCAL}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(configPayload),
     });
 
-    if (!listResp.ok) {
-      return res.json({ success: false, error: "Erro ao listar intents" });
+    if (response.ok) {
+      const data = await response.json();
+      console.log(`✅ Point Smart 2 configurada em modo PDV`);
+      console.log(`🔒 Menu bloqueado - apenas pagamentos via API`);
+
+      return res.json({
+        success: true,
+        message: "Point configurada com sucesso",
+        mode: "PDV",
+        device: data,
+      });
+    } else {
+      const error = await response.json();
+      console.error(`❌ Erro ao configurar Point:`, error);
+      return res.status(400).json({ success: false, error: error.message });
     }
-
-    const listData = await listResp.json();
-    const events = listData.events || [];
-
-    console.log(`🔍 Encontradas ${events.length} intent(s) na fila`);
-
-    let cleared = 0;
-
-    for (const ev of events) {
-      const iId = ev.payment_intent_id || ev.id;
-      const state = ev.state;
-
-      try {
-        const delResp = await fetch(`${listUrl}/${iId}`, {
-          method: "DELETE",
-          headers: { Authorization: `Bearer ${MP_ACCESS_TOKEN_LOCAL}` },
-        });
-
-        if (delResp.ok || delResp.status === 404) {
-          console.log(`  ✅ Intent ${iId} (${state}) removida`);
-          cleared++;
-        }
-      } catch (e) {
-        console.log(`  ⚠️ Erro ao remover ${iId}: ${e.message}`);
-      }
-
-      // Pequeno delay entre remoções
-      await new Promise((r) => setTimeout(r, 200));
-    }
-
-    console.log(
-      `✅ [CLEAR QUEUE] ${cleared} intent(s) removida(s) - Point Pro 2 completamente limpa!`,
-    );
-
-    res.json({
-      success: true,
-      cleared: cleared,
-      message: `${cleared} pagamento(s) removido(s) da fila`,
-    });
   } catch (error) {
-    console.error("❌ Erro ao limpar fila:", error.message);
+    console.error("❌ Erro ao configurar Point Smart 2:", error.message);
     res.status(500).json({ success: false, error: error.message });
   }
 });
+
+// Verificar status da Point Smart 2
+app.get("/api/point/status", async (req, res) => {
+  // Usa apenas credenciais globais (single-tenant)
+  const MP_ACCESS_TOKEN_LOCAL = MP_ACCESS_TOKEN;
+  const MP_DEVICE_ID_LOCAL = MP_DEVICE_ID;
+
+  if (!MP_ACCESS_TOKEN_LOCAL || !MP_DEVICE_ID_LOCAL) {
+    console.error("⚠️ Status Point: Credenciais não configuradas");
+    console.error(
+      `MP_ACCESS_TOKEN: ${MP_ACCESS_TOKEN_LOCAL ? "OK" : "AUSENTE"}`,
+    );
+    console.error(`MP_DEVICE_ID: ${MP_DEVICE_ID_LOCAL || "AUSENTE"}`);
+    return res.json({
+      connected: false,
+      error: "Credenciais não configuradas",
+    });
+  }
+
+  try {
+    console.log(`🔍 Verificando status da Point: ${MP_DEVICE_ID_LOCAL}`);
+
+    const deviceUrl = `https://api.mercadopago.com/point/integration-api/devices/${MP_DEVICE_ID_LOCAL}`;
+    const response = await fetch(deviceUrl, {
+      headers: { Authorization: `Bearer ${MP_ACCESS_TOKEN_LOCAL}` },
+    });
+
+    console.log(`📡 Resposta API Point: Status ${response.status}`);
+
+    if (response.ok) {
+      const device = await response.json();
+      console.log(`✅ Point encontrada:`, device);
+
+      return res.json({
+        connected: true,
+        id: device.id,
+        operating_mode: device.operating_mode,
+        status: device.status,
+        model: device.model || "Point Smart 2",
+      });
+    } else {
+      const errorData = await response.json();
+      console.error(`❌ Erro ao buscar Point:`, errorData);
+      return res.json({
+        connected: false,
+        error: "Point não encontrada",
+        details: errorData,
+      });
+    }
+  } catch (error) {
+    console.error("❌ Exceção ao verificar Point:", error);
+    res.status(500).json({ connected: false, error: error.message });
+  }
+});
+
+// Limpar TODA a fila de pagamentos da maquininha (chamar após pagamento aprovado)
+// app.post("/api/payment/clear-queue", async (req, res) => {
+//   // Usa apenas credenciais globais (single-tenant)
+//   const MP_ACCESS_TOKEN_LOCAL = MP_ACCESS_TOKEN;
+//   const MP_DEVICE_ID_LOCAL = MP_DEVICE_ID;
+
+//   if (!MP_ACCESS_TOKEN_LOCAL || !MP_DEVICE_ID_LOCAL) {
+//     return res.json({ success: true, cleared: 0 });
+//   }
+
+//   try {
+//     console.log(`🧹 [CLEAR QUEUE] Limpando TODA a fila da Point Pro 2...`);
+
+//     const listUrl = `https://api.mercadopago.com/point/integration-api/devices/${MP_DEVICE_ID_LOCAL}/payment-intents`;
+//     const listResp = await fetch(listUrl, {
+//       headers: { Authorization: `Bearer ${MP_ACCESS_TOKEN_LOCAL}` },
+//     });
+
+//     if (!listResp.ok) {
+//       return res.json({ success: false, error: "Erro ao listar intents" });
+//     }
+
+//     const listData = await listResp.json();
+//     const events = listData.events || [];
+
+//     console.log(`🔍 Encontradas ${events.length} intent(s) na fila`);
+
+//     let cleared = 0;
+
+//     for (const ev of events) {
+//       const iId = ev.payment_intent_id || ev.id;
+//       const state = ev.state;
+
+//       try {
+//         const delResp = await fetch(`${listUrl}/${iId}`, {
+//           method: "DELETE",
+//           headers: { Authorization: `Bearer ${MP_ACCESS_TOKEN_LOCAL}` },
+//         });
+
+//         if (delResp.ok || delResp.status === 404) {
+//           console.log(`  ✅ Intent ${iId} (${state}) removida`);
+//           cleared++;
+//         }
+//       } catch (e) {
+//         console.log(`  ⚠️ Erro ao remover ${iId}: ${e.message}`);
+//       }
+
+//       // Pequeno delay entre remoções
+//       await new Promise((r) => setTimeout(r, 200));
+//     }
+
+//     console.log(
+//       `✅ [CLEAR QUEUE] ${cleared} intent(s) removida(s) - Point Pro 2 completamente limpa!`,
+//     );
+
+//     res.json({
+//       success: true,
+//       cleared: cleared,
+//       message: `${cleared} pagamento(s) removido(s) da fila`,
+//     });
+//   } catch (error) {
+//     console.error("❌ Erro ao limpar fila:", error.message);
+//     res.status(500).json({ success: false, error: error.message });
+//   }
+// });
 
 // ============================================================================
 // FIM DA SEÇÃO DEPRECATED
@@ -3247,57 +3245,56 @@ app.post("/api/payment/clear-queue", async (req, res) => {
 
 // --- Rotas de IA ---
 
-// --- INTEGRAÇÃO POINT SMART 2 DESATIVADA ---
-// app.post("/api/payment/clear-queue", async (req, res) => {
-//   // Usa apenas credenciais globais (single-tenant)
-//   const MP_ACCESS_TOKEN_LOCAL = MP_ACCESS_TOKEN;
-//   const MP_DEVICE_ID_LOCAL = MP_DEVICE_ID;
-//
-//   if (!MP_ACCESS_TOKEN_LOCAL || !MP_DEVICE_ID_LOCAL) {
-//     return res.json({ success: true, cleared: 0 });
-//   }
-//
-//   try {
-//     console.log(`🧹 [CLEAR QUEUE] Limpando TODA a fila da Point Pro 2...`);
-//
-//     const listUrl = `https://api.mercadopago.com/point/integration-api/devices/${MP_DEVICE_ID_LOCAL}/payment-intents`;
-//     const listResp = await fetch(listUrl, {
-//       method: "DELETE",
-//       headers: {
-//         Authorization: `Bearer ${MP_ACCESS_TOKEN_LOCAL}`,
-//       },
-//     });
-//
-//     // Status 204 = sucesso sem conteúdo, ou 200-299 = sucesso
-//     if (!listResp.ok && listResp.status !== 204) {
-//       let errorMessage = "Erro ao limpar fila";
-//       if (
-//         listResp.status !== 204 &&
-//         listResp.headers.get("content-length") !== "0"
-//       ) {
-//         try {
-//           const data = await listResp.json();
-//           errorMessage = data.message || errorMessage;
-//         } catch (e) {
-//           // Ignora erro de parse, usa mensagem padrão
-//         }
-//       }
-//       throw new Error(errorMessage);
-//     }
-//
-//     console.log(
-//       `✅ [QUEUE] Fila limpa com sucesso (status ${listResp.status})`
-//     );
-//
-//     return res.json({
-//       success: true,
-//       message: "Fila de pagamentos limpa",
-//     });
-//   } catch (error) {
-//     console.error("❌ [QUEUE] Erro:", error);
-//     throw error;
-//   }
-// });
+app.post("/api/ai/suggestion", async (req, res) => {
+  if (!openai) {
+    return res.json({ text: "IA indisponível" });
+  }
+
+  // --- Endpoint adicional: SuperAdmin marca recebíveis por IDs ---
+  app.post(
+    "/api/super-admin/receivables/mark-received-by-ids",
+    async (req, res) => {
+      console.log(
+        "[LOG] POST /api/super-admin/receivables/mark-received-by-ids chamado",
+      );
+      console.log("[LOG] Headers:", req.headers);
+      console.log("[LOG] Body:", req.body);
+      try {
+        const superAdminPassword = req.headers["x-super-admin-password"];
+        console.log("[LOG] superAdminPassword recebido:", superAdminPassword);
+        if (!SUPER_ADMIN_PASSWORD) {
+          return res
+            .status(503)
+            .json({ error: "Super Admin não configurado." });
+        }
+        if (superAdminPassword !== SUPER_ADMIN_PASSWORD) {
+          return res
+            .status(401)
+            .json({ error: "Acesso negado. Senha de Super Admin inválida." });
+        }
+
+        let { orderIds } = req.body;
+        console.log("[LOG] orderIds recebido:", orderIds);
+        if (!orderIds || !Array.isArray(orderIds) || orderIds.length === 0) {
+          return res
+            .status(400)
+            .json({ error: "orderIds obrigatório (array)" });
+        }
+
+        const now = new Date().toISOString();
+        console.log("[LOG] Data de repasse:", now);
+        const updateResult = await db("orders")
+          .whereIn("id", orderIds)
+          .update({ repassadoSuperAdmin: 1, dataRepasseSuperAdmin: now });
+
+        console.log(
+          "[DEBUG] SuperAdmin marcou recebíveis por IDs:",
+          orderIds,
+          "Data:",
+          now,
+          "Resultado:",
+          updateResult,
+        );
 
         console.log("[LOG] updateResult:", updateResult);
         return res.json({
