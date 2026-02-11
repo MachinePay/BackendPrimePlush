@@ -52,12 +52,10 @@ router.post(
       const now = new Date().toISOString();
       console.log("[DEBUG] orderIds recebidos:", orderIds);
 
-      const updateResult = await db("orders")
-        .whereIn("id", orderIds)
-        .update({ 
-          repassadoSuperAdmin: 1, 
-          dataRepasseSuperAdmin: now 
-        });
+      const updateResult = await db("orders").whereIn("id", orderIds).update({
+        repassadoSuperAdmin: 1,
+        dataRepasseSuperAdmin: now,
+      });
 
       console.log("[DEBUG] Resultado do update:", updateResult);
 
@@ -70,81 +68,120 @@ router.post(
       });
     } catch (err) {
       console.log("[DEBUG] Erro interno:", err);
-      return res.status(500).json({ error: "Erro interno", details: err.message });
+      return res
+        .status(500)
+        .json({ error: "Erro interno", details: err.message });
     }
-  }
+  },
 );
 
 // 4. Endpoint GET - Listar recebíveis
 router.get("/super-admin/receivables", superAdminAuth, async (req, res) => {
   console.log("[DEBUG] GET /super-admin/receivables chamado!");
   try {
-    const orders = await db("orders")
+    // Buscar todos os order_ids já recebidos
+    const receivablesRows = await db("super_admin_receivables").select(
+      "order_ids",
+    );
+    let receivedOrderIds = [];
+    for (const row of receivablesRows) {
+      if (row.order_ids) {
+        try {
+          const ids = JSON.parse(row.order_ids);
+          if (Array.isArray(ids)) receivedOrderIds.push(...ids);
+        } catch {}
+      }
+    }
+    // Buscar apenas pedidos pagos/autorizados que ainda não foram recebidos
+    const paidOrders = await db("orders")
       .whereIn("paymentStatus", ["paid", "authorized"])
-      .andWhere(function () {
-        this.whereNull("repassadoSuperAdmin").orWhere("repassadoSuperAdmin", 0);
-      })
+      .whereNotIn("id", receivedOrderIds)
       .orderBy("timestamp", "desc");
 
-    let totalToReceive = 0;
-
-    const detailedOrders = orders.map((order) => {
-      const { id, timestamp, userName, total } = order;
+    // Buscar detalhes dos itens dos pedidos e calcular valor a receber corretamente
+    let totalBrutoReceber = 0;
+    const detailedOrders = [];
+    for (const order of paidOrders) {
       let items = [];
-      
       try {
-        items = typeof order.items === "string" ? JSON.parse(order.items) : (Array.isArray(order.items) ? order.items : []);
-      } catch (e) {
+        items = Array.isArray(order.items)
+          ? order.items
+          : JSON.parse(order.items);
+      } catch {
         items = [];
       }
-
-      let orderValueToReceive = 0;
-      const itemDetails = items.map((item) => {
+      // Buscar preço bruto de cada produto
+      const detailedItems = [];
+      for (const item of items) {
+        let precoBruto = 0;
+        // Tenta buscar pelo id do produto
+        const prodId = item.productId || item.id;
+        if (prodId) {
+          const prod = await db("products").where({ id: prodId }).first();
+          precoBruto = prod && prod.priceRaw ? parseFloat(prod.priceRaw) : 0;
+        } else if (item.precoBruto !== undefined) {
+          precoBruto = parseFloat(item.precoBruto);
+        }
         const price = Number(item.price) || 0;
-        const precoBruto = Number(item.precoBruto) || 0;
         const quantity = Number(item.quantity) || 1;
         const valueToReceive = (price - precoBruto) * quantity;
-        orderValueToReceive += valueToReceive;
-        
-        return {
+        detailedItems.push({
           name: item.name || "",
           price,
           precoBruto,
           quantity,
           valueToReceive,
-        };
-      });
-
-      totalToReceive += orderValueToReceive;
-      
-      return {
-        id,
-        timestamp,
-        userName,
-        total,
+        });
+      }
+      const orderValueToReceive = detailedItems.reduce(
+        (sum, i) => sum + i.valueToReceive,
+        0,
+      );
+      totalBrutoReceber += orderValueToReceive;
+      detailedOrders.push({
+        id: order.id,
+        timestamp: order.timestamp,
+        userName: order.userName,
+        total: parseFloat(order.total),
         orderValueToReceive,
-        items: itemDetails,
-      };
-    });
+        items: detailedItems,
+        status: order.status,
+        paymentType: order.paymentType,
+        paymentStatus: order.paymentStatus,
+      });
+    }
 
-    // Histórico de repasses já feitos
-    const history = await db("orders")
-      .where("repassadoSuperAdmin", 1)
-      .select("id", "timestamp", "userName", "total", "dataRepasseSuperAdmin");
+    // Histórico de recebimentos
+    const history = await db("super_admin_receivables")
+      .select("id", "amount", "received_at", "order_ids")
+      .orderBy("received_at", "desc")
+      .limit(20);
+
+    // Total já recebido anteriormente
+    const totalAlreadyReceived = await db("super_admin_receivables")
+      .sum("amount as total")
+      .first();
 
     res.json({
       success: true,
       stats: {
-        totalToReceive,
-        totalReceived: history.reduce((sum, o) => sum + (Number(o.total) || 0), 0),
-        alreadyReceivedCount: history.length,
+        totalToReceive: Math.max(0, totalBrutoReceber),
+        totalReceived: totalBrutoReceber,
+        alreadyReceived: parseFloat(totalAlreadyReceived.total) || 0,
       },
-      history,
+      history: history.map((h) => ({
+        id: h.id,
+        amount: parseFloat(h.amount),
+        date: h.received_at,
+        orderIds: h.order_ids ? JSON.parse(h.order_ids) : [],
+      })),
       orders: detailedOrders,
     });
   } catch (err) {
     console.log("[DEBUG] Erro no GET:", err);
-    res.status(500).json({ error: "Erro ao buscar dados", details: err.message });
+    res
+      .status(500)
+      .json({ error: "Erro ao buscar dados", details: err.message });
   }
 });
 
