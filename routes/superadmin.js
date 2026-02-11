@@ -1,50 +1,9 @@
-// Exemplo de implementação de endpoint para o SuperAdmin detalhar pedidos e cálculo de recebíveis
 const express = require("express");
 const router = express.Router();
-const { getAllOrders } = require("../services/paymentService");
-
-// Middleware simples de autenticação por senha
-function superAdminAuth(req, res, next) {
-  const password = req.headers["x-super-admin-password"];
-  if (!password || password !== process.env.SUPER_ADMIN_PASSWORD) {
-    return res.status(401).json({ error: "Unauthorized" });
-  }
-  next();
-}
-
-// Endpoint para marcar recebível como recebido
-router.post(
-  "/super-admin/receivables/mark-received",
-  superAdminAuth,
-  async (req, res) => {
-    try {
-      let { orderIds } = req.body;
-      if (!orderIds || !Array.isArray(orderIds) || orderIds.length === 0) {
-        return res.status(400).json({ error: "orderIds obrigatório (array)" });
-      }
-      const now = new Date().toISOString();
-      // Atualiza todos os pedidos marcando como repassados
-      await db("orders")
-        .whereIn("id", orderIds)
-        .update({ repassadoSuperAdmin: 1, dataRepasseSuperAdmin: now });
-      return res.json({
-        success: true,
-        message: "Recebíveis marcados como recebidos",
-        receivedOrderIds: orderIds,
-        dataRepasse: now,
-      });
-    } catch (err) {
-      return res
-        .status(500)
-        .json({ error: "Erro interno", details: err.message });
-    }
-  },
-            console.log("[DEBUG] Endpoint POST /super-admin/receivables/mark-received chamado!");
-);
-
-// Endpoint detalhado para recebíveis do SuperAdmin
 const knex = require("knex");
 const path = require("path");
+
+// 1. Configuração do Banco (Movida para o topo para evitar erros de inicialização)
 const dbConfig = process.env.DATABASE_URL
   ? {
       client: "pg",
@@ -60,9 +19,51 @@ const dbConfig = process.env.DATABASE_URL
       },
       useNullAsDefault: true,
     };
+
 const db = knex(dbConfig);
 
-// GET recebíveis do SuperAdmin (apenas não repassados)
+// 2. Middleware de autenticação
+function superAdminAuth(req, res, next) {
+  const password = req.headers["x-super-admin-password"];
+  if (!password || password !== process.env.SUPER_ADMIN_PASSWORD) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+  next();
+}
+
+// 3. Endpoint para marcar recebível como recebido
+router.post(
+  "/super-admin/receivables/mark-received",
+  superAdminAuth,
+  async (req, res) => {
+    console.log("[DEBUG] Endpoint POST /super-admin/receivables/mark-received chamado!");
+    try {
+      let { orderIds } = req.body;
+      if (!orderIds || !Array.isArray(orderIds) || orderIds.length === 0) {
+        return res.status(400).json({ error: "orderIds obrigatório (array)" });
+      }
+      
+      const now = new Date().toISOString();
+      
+      await db("orders")
+        .whereIn("id", orderIds)
+        .update({ repassadoSuperAdmin: 1, dataRepasseSuperAdmin: now });
+
+      return res.json({
+        success: true,
+        message: "Recebíveis marcados como recebidos",
+        receivedOrderIds: orderIds,
+        dataRepasse: now,
+      });
+    } catch (err) {
+      return res
+        .status(500)
+        .json({ error: "Erro interno", details: err.message });
+    }
+  }
+); // <-- O erro estava aqui (parêntese fechado corretamente agora)
+
+// 4. GET recebíveis do SuperAdmin
 router.get("/super-admin/receivables", superAdminAuth, async (req, res) => {
   try {
     const orders = await db("orders")
@@ -77,15 +78,11 @@ router.get("/super-admin/receivables", superAdminAuth, async (req, res) => {
       const { id, timestamp, userName, total } = order;
       let items = [];
       try {
-        items =
-          typeof order.items === "string"
-            ? JSON.parse(order.items)
-            : Array.isArray(order.items)
-              ? order.items
-              : [];
+        items = typeof order.items === "string" ? JSON.parse(order.items) : (Array.isArray(order.items) ? order.items : []);
       } catch (e) {
         items = [];
       }
+
       let orderValueToReceive = 0;
       const itemDetails = items.map((item) => {
         const price = Number(item.price) || 0;
@@ -101,6 +98,7 @@ router.get("/super-admin/receivables", superAdminAuth, async (req, res) => {
           valueToReceive,
         };
       });
+
       totalToReceive += orderValueToReceive;
       return {
         id,
@@ -112,16 +110,9 @@ router.get("/super-admin/receivables", superAdminAuth, async (req, res) => {
       };
     });
 
-    // Histórico de repasses
     const history = await db("orders")
       .where("repassadoSuperAdmin", 1)
-      .select(
-        "id",
-        "timestamp as date",
-        "userName",
-        "total",
-        "dataRepasseSuperAdmin",
-      );
+      .select("id", "timestamp as date", "userName", "total", "dataRepasseSuperAdmin");
 
     res.json({
       success: true,
@@ -134,10 +125,8 @@ router.get("/super-admin/receivables", superAdminAuth, async (req, res) => {
       orders: detailedOrders,
     });
   } catch (err) {
-    res
-      .status(500)
-      .json({ error: "Erro ao buscar dados", details: err.message });
+    res.status(500).json({ error: "Erro ao buscar dados", details: err.message });
   }
 });
 
-export default router;
+module.exports = router; // Use module.exports se estiver usando CommonJS (require)
