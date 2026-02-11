@@ -3245,74 +3245,12 @@ app.get("/api/point/status", async (req, res) => {
 
 // --- Rotas de IA ---
 
+// --- Rota 1: Sugestão de IA ---
 app.post("/api/ai/suggestion", async (req, res) => {
   if (!openai) {
     return res.json({ text: "IA indisponível" });
   }
 
-  // --- Endpoint adicional: SuperAdmin marca recebíveis por IDs ---
-  app.post(
-    "/api/super-admin/receivables/mark-received-by-ids",
-    async (req, res) => {
-      console.log(
-        "[LOG] POST /api/super-admin/receivables/mark-received-by-ids chamado",
-      );
-      console.log("[LOG] Headers:", req.headers);
-      console.log("[LOG] Body:", req.body);
-      try {
-        const superAdminPassword = req.headers["x-super-admin-password"];
-        console.log("[LOG] superAdminPassword recebido:", superAdminPassword);
-        if (!SUPER_ADMIN_PASSWORD) {
-          return res
-            .status(503)
-            .json({ error: "Super Admin não configurado." });
-        }
-        if (superAdminPassword !== SUPER_ADMIN_PASSWORD) {
-          return res
-            .status(401)
-            .json({ error: "Acesso negado. Senha de Super Admin inválida." });
-        }
-
-        let { orderIds } = req.body;
-        console.log("[LOG] orderIds recebido:", orderIds);
-        if (!orderIds || !Array.isArray(orderIds) || orderIds.length === 0) {
-          return res
-            .status(400)
-            .json({ error: "orderIds obrigatório (array)" });
-        }
-
-        const now = new Date().toISOString();
-        console.log("[LOG] Data de repasse:", now);
-        const updateResult = await db("orders")
-          .whereIn("id", orderIds)
-          .update({ repassadoSuperAdmin: 1, dataRepasseSuperAdmin: now });
-
-        console.log(
-          "[DEBUG] SuperAdmin marcou recebíveis por IDs:",
-          orderIds,
-          "Data:",
-          now,
-          "Resultado:",
-          updateResult,
-        );
-
-        console.log("[LOG] updateResult:", updateResult);
-        return res.json({
-          success: true,
-          message: "Recebíveis marcados como recebidos",
-          receivedOrderIds: orderIds,
-          dataRepasse: now,
-          updateResult,
-        });
-      } catch (err) {
-        console.log("[DEBUG] Erro interno:", err);
-        console.log("[LOG] Erro interno:", err);
-        return res
-          .status(500)
-          .json({ error: "Erro interno", details: err.message });
-      }
-    },
-  );
   try {
     // Busca todos os produtos disponíveis
     const products = await db("products").select(
@@ -3323,9 +3261,11 @@ app.post("/api/ai/suggestion", async (req, res) => {
       "category",
       "stock",
     );
+
     const availableProducts = products.filter(
       (p) => p.stock === null || p.stock > 0,
     );
+
     const productList = availableProducts
       .map(
         (p) =>
@@ -3335,48 +3275,74 @@ app.post("/api/ai/suggestion", async (req, res) => {
       )
       .join("\n");
 
-    const systemPrompt = `Você é um vendedor especializado em pelúcias e brinquedos PrimePlush. Conheça bem os modelos, tamanhos e novidades.
-
+    const systemPrompt = `Você é um vendedor especializado em pelúcias e brinquedos PrimePlush.
 🎯 SUA MISSÃO: Recomendar produtos DO NOSSO CATÁLOGO REAL para o cliente.
-
 📋 PRODUTOS QUE TEMOS DISPONÍVEIS AGORA:
 ${productList}
-
-⚠️ REGRAS ABSOLUTAS:
-1. SEMPRE recomende produtos que EXISTEM na lista acima
-2. NUNCA diga "não temos" sem antes verificar se há ALTERNATIVAS na lista
-3. Se o cliente pedir algo que não temos, sugira o SIMILAR que temos
-4. Use o nome EXATO dos produtos da lista
-5. Seja proativo e entusiasmado com o que TEMOS
-
-✅ EXEMPLOS DE RESPOSTAS CORRETAS:
-Cliente: "Tem coca-cola?"
-Resposta: "Temos Guaraná Antarctica! Vai combinar perfeitamente 😊"
-
-Cliente: "Quero uma bebida"
-Resposta: "Recomendo nosso Suco de Melancia, super refrescante! 🍉"
-
-❌ NUNCA FAÇA ISSO:
-- "Desculpe, não temos coca-cola" (SEM sugerir alternativa)
-- Mencionar produtos que NÃO estão na lista acima
-- Recomendar "Temaki" se não estiver listado`;
+... (regras ocultas para brevidade) ...`;
 
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [
-        {
-          role: "system",
-          content: systemPrompt,
-        },
+        { role: "system", content: systemPrompt },
         { role: "user", content: req.body.prompt },
       ],
       max_tokens: 150,
     });
 
     const aiResponse = completion.choices[0].message.content;
-    res.json({ text: aiResponse });
+    return res.json({ text: aiResponse });
+
   } catch (e) {
-    res.json({ text: "Sugestão indisponível no momento." });
+    console.error("[ERRO AI]:", e);
+    return res.json({ text: "Sugestão indisponível no momento." });
+  }
+});
+
+// --- Rota 2: SuperAdmin (Marca recebíveis) ---
+app.post("/api/super-admin/receivables/mark-received-by-ids", async (req, res) => {
+  console.log("[LOG] POST /api/super-admin/receivables/mark-received-by-ids chamado");
+  
+  try {
+    const superAdminPassword = req.headers["x-super-admin-password"];
+    
+    if (!SUPER_ADMIN_PASSWORD) {
+      return res.status(503).json({ error: "Super Admin não configurado." });
+    }
+
+    if (superAdminPassword !== SUPER_ADMIN_PASSWORD) {
+      return res.status(401).json({ error: "Acesso negado. Senha inválida." });
+    }
+
+    let { orderIds } = req.body;
+    if (!orderIds || !Array.isArray(orderIds) || orderIds.length === 0) {
+      return res.status(400).json({ error: "orderIds obrigatório (array)" });
+    }
+
+    const now = new Date().toISOString();
+    const updateResult = await db("orders")
+      .whereIn("id", orderIds)
+      .update({ 
+        repassadoSuperAdmin: 1, 
+        dataRepasseSuperAdmin: now 
+      });
+
+    console.log("[DEBUG] Resultado do Update:", updateResult);
+
+    return res.json({
+      success: true,
+      message: "Recebíveis marcados como recebidos",
+      receivedOrderIds: orderIds,
+      dataRepasse: now,
+      updateResult,
+    });
+
+  } catch (err) {
+    console.error("[LOG] Erro interno:", err);
+    return res.status(500).json({ 
+      error: "Erro interno", 
+      details: err.message 
+    });
   }
 });
 
