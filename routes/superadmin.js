@@ -210,33 +210,21 @@ router.get("/super-admin/receivables", superAdminAuth, async (req, res) => {
         const relatedOrders = await db("orders").whereIn("id", orderIds);
         relatedOrders.forEach((o) => {
           let valorRecebido = null;
-          const detalhado = valorRecebidoDetalhado.find(
-            (v) => v.orderId === o.id,
-          );
-          if (detalhado) {
-            valorRecebido = detalhado.valorRecebido;
-          } else if (
-            o.valorRecebido !== undefined &&
-            o.valorRecebido !== null
-          ) {
-            valorRecebido = parseFloat(o.valorRecebido);
-          } else {
-            let items = [];
-            try {
-              items = Array.isArray(o.items)
-                ? o.items
-                : JSON.parse(o.items || "[]");
-            } catch (e) {
-              items = [];
-            }
-            let totalBruto = 0;
-            items.forEach((item) => {
-              const priceRaw = item.precoBruto || item.priceRaw || 0;
-              totalBruto += priceRaw * (item.quantity || 1);
-            });
-            const valorTotal = o.total ? parseFloat(o.total) : 0;
-            valorRecebido = valorTotal - totalBruto;
+          let items = [];
+          try {
+            items = Array.isArray(o.items)
+              ? o.items
+              : JSON.parse(o.items || "[]");
+          } catch (e) {
+            items = [];
           }
+          valorRecebido = 0;
+          items.forEach((item) => {
+            let precoBruto = item.precoBruto || item.priceRaw || 0;
+            let precoVenda = item.price || 0;
+            let quantity = item.quantity || 1;
+            valorRecebido += (precoVenda - precoBruto) * quantity;
+          });
           const valorTotal = o.total ? parseFloat(o.total) : 0;
           history.push({
             repasseId: h.id,
