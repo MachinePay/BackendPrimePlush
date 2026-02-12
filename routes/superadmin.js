@@ -43,10 +43,31 @@ router.post(
       }
 
       const now = new Date().toISOString();
-      await db("orders").whereIn("id", orderIds).update({
-        repassadoSuperAdmin: 1,
-        dataRepasseSuperAdmin: now,
-      });
+      // Para cada pedido, calcular e salvar valorRecebido
+      for (const orderId of orderIds) {
+        const order = await db("orders").where({ id: orderId }).first();
+        if (!order) continue;
+        let items = [];
+        try {
+          items = Array.isArray(order.items)
+            ? order.items
+            : JSON.parse(order.items || "[]");
+        } catch (e) {
+          items = [];
+        }
+        let totalBruto = 0;
+        items.forEach((item) => {
+          const priceRaw = item.precoBruto || item.priceRaw || 0;
+          totalBruto += priceRaw * (item.quantity || 1);
+        });
+        const valorTotal = order.total ? parseFloat(order.total) : 0;
+        const valorRecebido = valorTotal - totalBruto;
+        await db("orders").where({ id: orderId }).update({
+          repassadoSuperAdmin: 1,
+          dataRepasseSuperAdmin: now,
+          valorRecebido: valorRecebido,
+        });
+      }
 
       return res.json({
         success: true,
@@ -161,21 +182,27 @@ router.get("/super-admin/receivables", superAdminAuth, async (req, res) => {
       if (orderIds.length > 0) {
         const relatedOrders = await db("orders").whereIn("id", orderIds);
         relatedOrders.forEach((o) => {
-          let items = [];
-          try {
-            items = Array.isArray(o.items)
-              ? o.items
-              : JSON.parse(o.items || "[]");
-          } catch (e) {
-            items = [];
+          let valorRecebido = null;
+          if (o.valorRecebido !== undefined && o.valorRecebido !== null) {
+            valorRecebido = parseFloat(o.valorRecebido);
+          } else {
+            let items = [];
+            try {
+              items = Array.isArray(o.items)
+                ? o.items
+                : JSON.parse(o.items || "[]");
+            } catch (e) {
+              items = [];
+            }
+            let totalBruto = 0;
+            items.forEach((item) => {
+              const priceRaw = item.precoBruto || item.priceRaw || 0;
+              totalBruto += priceRaw * (item.quantity || 1);
+            });
+            const valorTotal = o.total ? parseFloat(o.total) : 0;
+            valorRecebido = valorTotal - totalBruto;
           }
-          let totalBruto = 0;
-          items.forEach((item) => {
-            const priceRaw = item.precoBruto || item.priceRaw || 0;
-            totalBruto += priceRaw * (item.quantity || 1);
-          });
           const valorTotal = o.total ? parseFloat(o.total) : 0;
-          const valorRecebido = valorTotal - totalBruto;
           history.push({
             repasseId: h.id,
             pedidoId: o.id,
