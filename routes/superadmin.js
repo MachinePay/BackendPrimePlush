@@ -32,50 +32,63 @@ function superAdminAuth(req, res, next) {
 }
 
 // 3. Endpoint POST - Marcar como recebido
-router.post("/super-admin/receivables/mark-received", superAdminAuth, async (req, res) => {
-  try {
-    const { orderIds } = req.body;
-    if (!orderIds || !Array.isArray(orderIds) || orderIds.length === 0) {
-      return res.status(400).json({ error: "orderIds obrigatório (array)" });
+router.post(
+  "/super-admin/receivables/mark-received",
+  superAdminAuth,
+  async (req, res) => {
+    try {
+      const { orderIds } = req.body;
+      if (!orderIds || !Array.isArray(orderIds) || orderIds.length === 0) {
+        return res.status(400).json({ error: "orderIds obrigatório (array)" });
+      }
+
+      const now = new Date().toISOString();
+      await db("orders").whereIn("id", orderIds).update({
+        repassadoSuperAdmin: 1,
+        dataRepasseSuperAdmin: now,
+      });
+
+      return res.json({
+        success: true,
+        message: "Recebíveis marcados como recebidos",
+        receivedOrderIds: orderIds,
+        dataRepasse: now,
+      });
+    } catch (err) {
+      console.error("[DEBUG] Erro no POST:", err);
+      return res
+        .status(500)
+        .json({ error: "Erro interno", details: err.message });
     }
-
-    const now = new Date().toISOString();
-    await db("orders").whereIn("id", orderIds).update({
-      repassadoSuperAdmin: 1,
-      dataRepasseSuperAdmin: now,
-    });
-
-    return res.json({
-      success: true,
-      message: "Recebíveis marcados como recebidos",
-      receivedOrderIds: orderIds,
-      dataRepasse: now
-    });
-  } catch (err) {
-    console.error("[DEBUG] Erro no POST:", err);
-    return res.status(500).json({ error: "Erro interno", details: err.message });
-  }
-});
+  },
+);
 
 // 4. Endpoint GET - Listar recebíveis
 router.get("/super-admin/receivables", superAdminAuth, async (req, res) => {
   try {
     // A. Buscar IDs já processados na tabela de repasses
-    const receivablesRows = await db("super_admin_receivables").select("order_ids");
+    const receivablesRows = await db("super_admin_receivables").select(
+      "order_ids",
+    );
     let alreadyProcessedIds = [];
-    receivablesRows.forEach(row => {
+    receivablesRows.forEach((row) => {
       if (row.order_ids) {
         try {
           const ids = JSON.parse(row.order_ids);
           if (Array.isArray(ids)) alreadyProcessedIds.push(...ids);
-        } catch (e) { /* ignore */ }
+        } catch (e) {
+          /* ignore */
+        }
       }
     });
 
     // B. Buscar pedidos pagos que ainda não foram processados
     const paidOrders = await db("orders")
       .whereIn("paymentStatus", ["paid", "authorized"])
-      .whereNotIn("id", alreadyProcessedIds.length > 0 ? alreadyProcessedIds : [''])
+      .whereNotIn(
+        "id",
+        alreadyProcessedIds.length > 0 ? alreadyProcessedIds : [""],
+      )
       .orderBy("timestamp", "desc");
 
     let totalBrutoReceber = 0;
@@ -85,8 +98,12 @@ router.get("/super-admin/receivables", superAdminAuth, async (req, res) => {
     for (const order of paidOrders) {
       let items = [];
       try {
-        items = Array.isArray(order.items) ? order.items : JSON.parse(order.items || "[]");
-      } catch (e) { items = []; }
+        items = Array.isArray(order.items)
+          ? order.items
+          : JSON.parse(order.items || "[]");
+      } catch (e) {
+        items = [];
+      }
 
       const detailedItems = [];
       let orderValueToReceive = 0;
@@ -103,14 +120,14 @@ router.get("/super-admin/receivables", superAdminAuth, async (req, res) => {
         const price = Number(item.price) || 0;
         const quantity = Number(item.quantity) || 1;
         const profit = (price - precoBruto) * quantity;
-        
+
         orderValueToReceive += profit;
         detailedItems.push({
           name: item.name || "Produto",
           price,
           precoBruto,
           quantity,
-          valueToReceive: profit
+          valueToReceive: profit,
         });
       }
 
@@ -122,7 +139,7 @@ router.get("/super-admin/receivables", superAdminAuth, async (req, res) => {
         total: parseFloat(order.total) || 0,
         orderValueToReceive,
         items: detailedItems,
-        paymentStatus: order.paymentStatus
+        paymentStatus: order.paymentStatus,
       });
     }
 
@@ -137,20 +154,37 @@ router.get("/super-admin/receivables", superAdminAuth, async (req, res) => {
       let orderIds = [];
       try {
         orderIds = JSON.parse(h.order_ids || "[]");
-      } catch (e) { orderIds = []; }
+      } catch (e) {
+        orderIds = [];
+      }
 
       if (orderIds.length > 0) {
         const relatedOrders = await db("orders").whereIn("id", orderIds);
-        relatedOrders.forEach(o => {
+        relatedOrders.forEach((o) => {
+          let items = [];
+          try {
+            items = Array.isArray(o.items)
+              ? o.items
+              : JSON.parse(o.items || "[]");
+          } catch (e) {
+            items = [];
+          }
+          let totalBruto = 0;
+          items.forEach((item) => {
+            const priceRaw = item.precoBruto || item.priceRaw || 0;
+            totalBruto += priceRaw * (item.quantity || 1);
+          });
+          const valorTotal = o.total ? parseFloat(o.total) : 0;
+          const valorRecebido = valorTotal - totalBruto;
           history.push({
             repasseId: h.id,
             pedidoId: o.id,
             cliente: o.userName || "-",
-            valorTotal: o.total ? parseFloat(o.total) : 0,
+            valorTotal,
             dataPedido: o.timestamp,
             dataRepasse: o.dataRepasseSuperAdmin || h.received_at,
-            valorRecebido: parseFloat(h.amount),
-          });    
+            valorRecebido,
+          });
         });
       } else {
         history.push({
@@ -165,7 +199,9 @@ router.get("/super-admin/receivables", superAdminAuth, async (req, res) => {
       }
     }
 
-    const totalSum = await db("super_admin_receivables").sum("amount as total").first();
+    const totalSum = await db("super_admin_receivables")
+      .sum("amount as total")
+      .first();
 
     return res.json({
       success: true,
@@ -176,10 +212,11 @@ router.get("/super-admin/receivables", superAdminAuth, async (req, res) => {
       history,
       orders: detailedOrders,
     });
-
   } catch (err) {
     console.error("[ERROR GET]:", err);
-    return res.status(500).json({ error: "Erro ao buscar dados", details: err.message });
+    return res
+      .status(500)
+      .json({ error: "Erro ao buscar dados", details: err.message });
   }
 });
 

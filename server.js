@@ -1,4 +1,3 @@
-
 // ...existing code...
 // ...existing code...
 // ...existing code...
@@ -1078,6 +1077,7 @@ app.post("/api/users/register", async (req, res) => {
       phone: phone.trim(),
       historico: JSON.stringify([]),
       pontos: 0,
+      role: "customer",
     };
 
     await db("users").insert(newUser);
@@ -1544,6 +1544,12 @@ app.get("/api/orders/history", async (req, res) => {
       ...o,
       items: typeof o.items === "string" ? JSON.parse(o.items) : o.items,
       total: parseFloat(o.total),
+      paymentMethod:
+        o.paymentMethod ||
+        o.payment_method ||
+        o.payment_method_id ||
+        o.paymentType ||
+        "-",
     }));
     res.json(parsedOrders);
   } catch (e) {
