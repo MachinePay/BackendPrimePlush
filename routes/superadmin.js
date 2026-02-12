@@ -270,4 +270,28 @@ router.get("/super-admin/receivables", superAdminAuth, async (req, res) => {
   }
 });
 
+// Endpoint para marcar pedido como entregue ao cliente
+router.put("/orders/:id/mark-delivered", async (req, res) => {
+  try {
+    const { id } = req.params;
+    // Atualiza a coluna entregueCliente para true (1)
+    const updated = await db("orders")
+      .where({ id })
+      .update({ entregueCliente: 1 });
+    if (updated) {
+      return res.json({
+        success: true,
+        message: "Pedido marcado como entregue ao cliente.",
+      });
+    } else {
+      return res
+        .status(404)
+        .json({ success: false, message: "Pedido não encontrado." });
+    }
+  } catch (err) {
+    console.error("[ERRO] PUT /orders/:id/mark-delivered", err);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 export default router;
