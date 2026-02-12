@@ -43,7 +43,8 @@ router.post(
       }
 
       const now = new Date().toISOString();
-      // Para cada pedido, calcular e salvar valorRecebido
+      let valorRecebidoTotal = 0;
+      let valorRecebidoDetalhado = [];
       for (const orderId of orderIds) {
         const order = await db("orders").where({ id: orderId }).first();
         if (!order) continue;
@@ -62,6 +63,8 @@ router.post(
           let quantity = item.quantity || 1;
           valorRecebido += (precoVenda - precoBruto) * quantity;
         });
+        valorRecebidoTotal += valorRecebido;
+        valorRecebidoDetalhado.push({ orderId, valorRecebido });
         await db("orders").where({ id: orderId }).update({
           repassadoSuperAdmin: 1,
           dataRepasseSuperAdmin: now,
@@ -69,11 +72,21 @@ router.post(
         });
       }
 
+      // Salva o valor recebido total e detalhado na tabela de repasses
+      await db("super_admin_receivables").insert({
+        amount: valorRecebidoTotal,
+        order_ids: JSON.stringify(orderIds),
+        received_at: now,
+        valorRecebidoDetalhado: JSON.stringify(valorRecebidoDetalhado),
+      });
+
       return res.json({
         success: true,
         message: "Recebíveis marcados como recebidos",
         receivedOrderIds: orderIds,
         dataRepasse: now,
+        valorRecebidoTotal,
+        valorRecebidoDetalhado,
       });
     } catch (err) {
       console.error("[DEBUG] Erro no POST:", err);
@@ -166,24 +179,46 @@ router.get("/super-admin/receivables", superAdminAuth, async (req, res) => {
 
     // D. Buscar Histórico de Repasses
     const historyRows = await db("super_admin_receivables")
-      .select("id", "amount", "received_at", "order_ids")
+      .select(
+        "id",
+        "amount",
+        "received_at",
+        "order_ids",
+        "valorRecebidoDetalhado",
+      )
       .orderBy("received_at", "desc")
       .limit(20);
 
     const history = [];
     for (const h of historyRows) {
       let orderIds = [];
+      let valorRecebidoDetalhado = [];
       try {
         orderIds = JSON.parse(h.order_ids || "[]");
       } catch (e) {
         orderIds = [];
+      }
+      try {
+        valorRecebidoDetalhado = h.valorRecebidoDetalhado
+          ? JSON.parse(h.valorRecebidoDetalhado)
+          : [];
+      } catch (e) {
+        valorRecebidoDetalhado = [];
       }
 
       if (orderIds.length > 0) {
         const relatedOrders = await db("orders").whereIn("id", orderIds);
         relatedOrders.forEach((o) => {
           let valorRecebido = null;
-          if (o.valorRecebido !== undefined && o.valorRecebido !== null) {
+          const detalhado = valorRecebidoDetalhado.find(
+            (v) => v.orderId === o.id,
+          );
+          if (detalhado) {
+            valorRecebido = detalhado.valorRecebido;
+          } else if (
+            o.valorRecebido !== undefined &&
+            o.valorRecebido !== null
+          ) {
             valorRecebido = parseFloat(o.valorRecebido);
           } else {
             let items = [];
