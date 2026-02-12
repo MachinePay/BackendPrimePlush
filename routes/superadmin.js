@@ -55,13 +55,13 @@ router.post(
         } catch (e) {
           items = [];
         }
-        let totalBruto = 0;
+        let valorRecebido = 0;
         items.forEach((item) => {
-          const priceRaw = item.precoBruto || item.priceRaw || 0;
-          totalBruto += priceRaw * (item.quantity || 1);
+          let precoBruto = item.precoBruto || item.priceRaw || 0;
+          let precoVenda = item.price || 0;
+          let quantity = item.quantity || 1;
+          valorRecebido += (precoVenda - precoBruto) * quantity;
         });
-        const valorTotal = order.total ? parseFloat(order.total) : 0;
-        const valorRecebido = valorTotal - totalBruto;
         await db("orders").where({ id: orderId }).update({
           repassadoSuperAdmin: 1,
           dataRepasseSuperAdmin: now,
