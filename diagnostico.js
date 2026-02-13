@@ -1,8 +1,8 @@
 import axios from "axios";
 
 const TOKEN =
-  "APP_USR-434184288119812-112416-622965936e5edf32d8c37dc7da51c7c8-1684847114";
-const DEVICE_ID = "NEWLAND_N950__N950NCB100407414";
+  "APP_USR-90168832543631-021309-37d571dbf06e60abe540590ed4afcbb9-3160034617";
+const DEVICE_ID = "PAX_Q92__Q92-1733040244";
 
 async function diagnosticoCompleto() {
   console.log("🔍 DIAGNÓSTICO COMPLETO - Point API\n");
