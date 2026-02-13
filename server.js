@@ -1301,10 +1301,13 @@ app.put("/api/orders/:id/mark-paid", async (req, res) => {
     // Parse items from order
     let items = [];
     try {
-      items = typeof order.items === "string" ? JSON.parse(order.items) : order.items;
+      items =
+        typeof order.items === "string" ? JSON.parse(order.items) : order.items;
     } catch (err) {
       console.error("❌ Erro ao parsear itens do pedido:", err);
-      return res.status(500).json({ error: "Erro ao processar itens do pedido" });
+      return res
+        .status(500)
+        .json({ error: "Erro ao processar itens do pedido" });
     }
 
     // Decrement stock for each product in the order
@@ -1312,19 +1315,25 @@ app.put("/api/orders/:id/mark-paid", async (req, res) => {
       const product = await db("products").where({ id: item.id }).first();
       if (product && product.stock !== null) {
         const newStock = Math.max(0, product.stock - item.quantity);
-        const newReserved = Math.max(0, (product.stock_reserved || 0) - item.quantity);
+        const newReserved = Math.max(
+          0,
+          (product.stock_reserved || 0) - item.quantity,
+        );
         await db("products").where({ id: item.id }).update({
           stock: newStock,
           stock_reserved: newReserved,
         });
         console.log(
-          `  ✅ [Manual] ${item.name}: ${product.stock} → ${newStock} (-${item.quantity}), reserva: ${product.stock_reserved} → ${newReserved}`
+          `  ✅ [Manual] ${item.name}: ${product.stock} → ${newStock} (-${item.quantity}), reserva: ${product.stock_reserved} → ${newReserved}`,
         );
       }
     }
 
     await db("orders").where({ id }).update({ paymentStatus: "paid" });
-    res.json({ success: true, message: "Pedido marcado como pago e estoque atualizado" });
+    res.json({
+      success: true,
+      message: "Pedido marcado como pago e estoque atualizado",
+    });
   } catch (e) {
     console.error("❌ Erro ao marcar pedido como pago:", e);
     res.status(500).json({ error: "Erro ao marcar pedido como pago" });
@@ -3160,6 +3169,7 @@ app.post(
       // Calcula o valor total a receber desses pedidos
       const orders = await db("orders").whereIn("id", orderIds);
       let totalBrutoReceber = 0;
+      let valorRecebidoDetalhado = [];
       for (const order of orders) {
         let items = [];
         try {
@@ -3169,20 +3179,32 @@ app.post(
         } catch {
           items = [];
         }
+        let valorRecebidoPedido = 0;
         for (const item of items) {
           let precoBruto = 0;
+          let precoVenda = 0;
           const prodId = item.productId || item.id;
           if (prodId) {
             const prod = await db("products").where({ id: prodId }).first();
             precoBruto = prod && prod.priceRaw ? parseFloat(prod.priceRaw) : 0;
-          } else if (item.precoBruto !== undefined) {
-            precoBruto = parseFloat(item.precoBruto);
+            precoVenda = prod && prod.price ? parseFloat(prod.price) : 0;
+          } else {
+            if (item.precoBruto !== undefined) {
+              precoBruto = parseFloat(item.precoBruto);
+            }
+            if (item.price !== undefined) {
+              precoVenda = parseFloat(item.price);
+            }
           }
-          const price = Number(item.price) || 0;
           const quantity = Number(item.quantity) || 1;
-          const valueToReceive = (price - precoBruto) * quantity;
+          const valueToReceive = (precoVenda - precoBruto) * quantity;
+          valorRecebidoPedido += valueToReceive;
           totalBrutoReceber += valueToReceive;
         }
+        valorRecebidoDetalhado.push({
+          orderId: order.id,
+          valorRecebido: valorRecebidoPedido,
+        });
       }
 
       // Insere registro na tabela de recebíveis
@@ -3206,6 +3228,7 @@ app.post(
         dataRepasse: now,
         updateResult,
         totalRecebido: totalBrutoReceber,
+        valorRecebidoDetalhado,
       });
     } catch (err) {
       console.error("[LOG] Erro interno:", err);

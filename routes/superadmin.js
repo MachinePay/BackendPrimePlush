@@ -43,7 +43,8 @@ router.post(
       }
 
       const now = new Date().toISOString();
-      // Para cada pedido, calcular e salvar valorRecebido
+      let valorRecebidoTotal = 0;
+      let valorRecebidoDetalhado = [];
       for (const orderId of orderIds) {
         const order = await db("orders").where({ id: orderId }).first();
         if (!order) continue;
@@ -55,13 +56,15 @@ router.post(
         } catch (e) {
           items = [];
         }
-        let totalBruto = 0;
+        let valorRecebido = 0;
         items.forEach((item) => {
-          const priceRaw = item.precoBruto || item.priceRaw || 0;
-          totalBruto += priceRaw * (item.quantity || 1);
+          let precoBruto = item.precoBruto || item.priceRaw || 0;
+          let precoVenda = item.price || 0;
+          let quantity = item.quantity || 1;
+          valorRecebido += (precoVenda - precoBruto) * quantity;
         });
-        const valorTotal = order.total ? parseFloat(order.total) : 0;
-        const valorRecebido = valorTotal - totalBruto;
+        valorRecebidoTotal += valorRecebido;
+        valorRecebidoDetalhado.push({ orderId, valorRecebido });
         await db("orders").where({ id: orderId }).update({
           repassadoSuperAdmin: 1,
           dataRepasseSuperAdmin: now,
@@ -69,11 +72,21 @@ router.post(
         });
       }
 
+      // Salva o valor recebido total e detalhado na tabela de repasses
+      await db("super_admin_receivables").insert({
+        amount: valorRecebidoTotal,
+        order_ids: JSON.stringify(orderIds),
+        received_at: now,
+        valorRecebidoDetalhado: JSON.stringify(valorRecebidoDetalhado),
+      });
+
       return res.json({
         success: true,
         message: "Recebíveis marcados como recebidos",
         receivedOrderIds: orderIds,
         dataRepasse: now,
+        valorRecebidoTotal,
+        valorRecebidoDetalhado,
       });
     } catch (err) {
       console.error("[DEBUG] Erro no POST:", err);
@@ -166,42 +179,52 @@ router.get("/super-admin/receivables", superAdminAuth, async (req, res) => {
 
     // D. Buscar Histórico de Repasses
     const historyRows = await db("super_admin_receivables")
-      .select("id", "amount", "received_at", "order_ids")
+      .select(
+        "id",
+        "amount",
+        "received_at",
+        "order_ids",
+        "valorRecebidoDetalhado",
+      )
       .orderBy("received_at", "desc")
       .limit(20);
 
     const history = [];
     for (const h of historyRows) {
       let orderIds = [];
+      let valorRecebidoDetalhado = [];
       try {
         orderIds = JSON.parse(h.order_ids || "[]");
       } catch (e) {
         orderIds = [];
+      }
+      try {
+        valorRecebidoDetalhado = h.valorRecebidoDetalhado
+          ? JSON.parse(h.valorRecebidoDetalhado)
+          : [];
+      } catch (e) {
+        valorRecebidoDetalhado = [];
       }
 
       if (orderIds.length > 0) {
         const relatedOrders = await db("orders").whereIn("id", orderIds);
         relatedOrders.forEach((o) => {
           let valorRecebido = null;
-          if (o.valorRecebido !== undefined && o.valorRecebido !== null) {
-            valorRecebido = parseFloat(o.valorRecebido);
-          } else {
-            let items = [];
-            try {
-              items = Array.isArray(o.items)
-                ? o.items
-                : JSON.parse(o.items || "[]");
-            } catch (e) {
-              items = [];
-            }
-            let totalBruto = 0;
-            items.forEach((item) => {
-              const priceRaw = item.precoBruto || item.priceRaw || 0;
-              totalBruto += priceRaw * (item.quantity || 1);
-            });
-            const valorTotal = o.total ? parseFloat(o.total) : 0;
-            valorRecebido = valorTotal - totalBruto;
+          let items = [];
+          try {
+            items = Array.isArray(o.items)
+              ? o.items
+              : JSON.parse(o.items || "[]");
+          } catch (e) {
+            items = [];
           }
+          valorRecebido = 0;
+          items.forEach((item) => {
+            let precoBruto = item.precoBruto || item.priceRaw || 0;
+            let precoVenda = item.price || 0;
+            let quantity = item.quantity || 1;
+            valorRecebido += (precoVenda - precoBruto) * quantity;
+          });
           const valorTotal = o.total ? parseFloat(o.total) : 0;
           history.push({
             repasseId: h.id,
@@ -244,6 +267,30 @@ router.get("/super-admin/receivables", superAdminAuth, async (req, res) => {
     return res
       .status(500)
       .json({ error: "Erro ao buscar dados", details: err.message });
+  }
+});
+
+// Endpoint para marcar pedido como entregue ao cliente
+router.put("/orders/:id/mark-delivered", async (req, res) => {
+  try {
+    const { id } = req.params;
+    // Atualiza a coluna entregueCliente para true (1)
+    const updated = await db("orders")
+      .where({ id })
+      .update({ entregueCliente: 1 });
+    if (updated) {
+      return res.json({
+        success: true,
+        message: "Pedido marcado como entregue ao cliente.",
+      });
+    } else {
+      return res
+        .status(404)
+        .json({ success: false, message: "Pedido não encontrado." });
+    }
+  } catch (err) {
+    console.error("[ERRO] PUT /orders/:id/mark-delivered", err);
+    return res.status(500).json({ success: false, error: err.message });
   }
 });
 
