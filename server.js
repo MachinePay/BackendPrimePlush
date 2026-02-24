@@ -1,3 +1,4 @@
+
 // ...existing code...
 // ...existing code...
 // ...existing code...
@@ -548,6 +549,22 @@ app.use(
   }),
 );
 app.use(express.json());
+
+// Endpoint para listar todos os produtos (admin)
+app.get(
+  "/api/products",
+  authenticateToken,
+  authorizeAdmin,
+  async (req, res) => {
+    try {
+      const products = await db("products").select("*").orderBy("id");
+      res.json(products);
+    } catch (e) {
+      console.error("Erro ao buscar todos os produtos:", e);
+      res.status(500).json({ error: "Erro ao buscar produtos" });
+    }
+  },
+);
 
 // --- Rotas de Pagamento Multi-tenant ---
 // TEMPORARIAMENTE DESABILITADO - Usando rotas antigas funcionais (linhas 1807+)
