@@ -827,8 +827,8 @@ app.put(
       if (minStock !== undefined) updates.minStock = parseInt(minStock);
       if (active !== undefined) updates.active = !!active;
 
-      if (quantidadeVenda !== undefined)
-        updates.quantidadeVenda = parseInt(quantidadeVenda);
+      if (req.body.quantidadeVenda !== undefined)
+        updates.quantidadeVenda = parseInt(req.body.quantidadeVenda);
       // Só atualiza se houver campos para atualizar
       if (Object.keys(updates).length === 0) {
         return res.status(400).json({ error: "Nenhum campo para atualizar." });
