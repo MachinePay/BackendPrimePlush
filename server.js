@@ -636,7 +636,10 @@ app.post("/api/auth/login", (req, res) => {
 app.get("/api/menu", async (req, res) => {
   try {
     // SINGLE-TENANT: Retorna todos os produtos
-    const products = await db("products").select("*").orderBy("id");
+    const products = await db("products")
+      .select("*")
+      .where({ active: true })
+      .orderBy("id");
     console.log(
       `✅ [GET /api/menu] Retornando ${products.length} produtos (single-tenant)`,
     );
@@ -775,6 +778,7 @@ app.put(
       popular,
       stock,
       minStock,
+      active,
     } = req.body;
 
     try {
@@ -796,7 +800,9 @@ app.put(
       if (popular !== undefined) updates.popular = popular;
       if (stock !== undefined)
         updates.stock = stock === null ? null : parseInt(stock);
+
       if (minStock !== undefined) updates.minStock = parseInt(minStock);
+      if (active !== undefined) updates.active = !!active;
 
       // MULTI-TENANCY: Atualiza apenas se pertencer à loja
       await db("products").where({ id }).update(updates);
