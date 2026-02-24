@@ -1,7 +1,10 @@
+// ...existing code...
+// ...existing code...
+// ...existing code...
+// --- Middlewares de Autenticação e Autorização ---
 
-// ...existing code...
-// ...existing code...
-// ...existing code...
+
+
 // Atualizar informações do usuário (incluindo senha)
 
 import { sendOrderPdfEmail } from "./services/orderPdfEmail.js";
@@ -551,20 +554,6 @@ app.use(
 app.use(express.json());
 
 // Endpoint para listar todos os produtos (admin)
-app.get(
-  "/api/products",
-  authenticateToken,
-  authorizeAdmin,
-  async (req, res) => {
-    try {
-      const products = await db("products").select("*").orderBy("id");
-      res.json(products);
-    } catch (e) {
-      console.error("Erro ao buscar todos os produtos:", e);
-      res.status(500).json({ error: "Erro ao buscar produtos" });
-    }
-  },
-);
 
 // --- Rotas de Pagamento Multi-tenant ---
 // TEMPORARIAMENTE DESABILITADO - Usando rotas antigas funcionais (linhas 1807+)
@@ -730,6 +719,21 @@ const authorizeKitchen = (req, res, next) => {
 };
 
 // CRUD de Produtos (Admin)
+
+app.get(
+  "/api/products",
+  authenticateToken,
+  authorizeAdmin,
+  async (req, res) => {
+    try {
+      const products = await db("products").select("*").orderBy("id");
+      res.json(products);
+    } catch (e) {
+      console.error("Erro ao buscar todos os produtos:", e);
+      res.status(500).json({ error: "Erro ao buscar produtos" });
+    }
+  },
+);
 
 app.post(
   "/api/products",
@@ -1015,6 +1019,23 @@ app.get("/api/users", authenticateToken, authorizeAdmin, async (req, res) => {
     res.status(500).json({ error: "Erro ao buscar usuários" });
   }
 });
+
+
+// Endpoint para listar todos os produtos (admin)
+app.get(
+  "/api/products",
+  authenticateToken,
+  authorizeAdmin,
+  async (req, res) => {
+    try {
+      const products = await db("products").select("*").orderBy("id");
+      res.json(products);
+    } catch (e) {
+      console.error("Erro ao buscar todos os produtos:", e);
+      res.status(500).json({ error: "Erro ao buscar produtos" });
+    }
+  },
+);
 
 // ========== PASSO 1: Verificar se CPF existe (NÃO cria usuário) ==========
 app.post("/api/users/check-cpf", async (req, res) => {
