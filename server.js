@@ -804,7 +804,10 @@ app.put(
       if (minStock !== undefined) updates.minStock = parseInt(minStock);
       if (active !== undefined) updates.active = !!active;
 
-      // MULTI-TENANCY: Atualiza apenas se pertencer à loja
+      // Só atualiza se houver campos para atualizar
+      if (Object.keys(updates).length === 0) {
+        return res.status(400).json({ error: "Nenhum campo para atualizar." });
+      }
       await db("products").where({ id }).update(updates);
 
       const updated = await db("products").where({ id }).first();
