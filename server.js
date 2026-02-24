@@ -3,8 +3,6 @@
 // ...existing code...
 // --- Middlewares de Autenticação e Autorização ---
 
-
-
 // Atualizar informações do usuário (incluindo senha)
 
 import { sendOrderPdfEmail } from "./services/orderPdfEmail.js";
@@ -769,6 +767,10 @@ app.post(
         popular: popular || false,
         stock: stock !== undefined ? parseInt(stock) : null, // null = ilimitado
         minStock: minStock !== undefined ? parseInt(minStock) : 0,
+        quantidadeVenda:
+          req.body.quantidadeVenda !== undefined
+            ? parseInt(req.body.quantidadeVenda)
+            : 1,
       };
 
       await db("products").insert(newProduct);
@@ -825,6 +827,8 @@ app.put(
       if (minStock !== undefined) updates.minStock = parseInt(minStock);
       if (active !== undefined) updates.active = !!active;
 
+      if (quantidadeVenda !== undefined)
+        updates.quantidadeVenda = parseInt(quantidadeVenda);
       // Só atualiza se houver campos para atualizar
       if (Object.keys(updates).length === 0) {
         return res.status(400).json({ error: "Nenhum campo para atualizar." });
@@ -1019,7 +1023,6 @@ app.get("/api/users", authenticateToken, authorizeAdmin, async (req, res) => {
     res.status(500).json({ error: "Erro ao buscar usuários" });
   }
 });
-
 
 // Endpoint para listar todos os produtos (admin)
 app.get(
