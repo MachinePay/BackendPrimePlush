@@ -1087,7 +1087,7 @@ app.post("/api/", async (req, res) => {
     if (user) {
       return res.json({
         exists: true,
-        user: { id: user.id, name: user.name, cpf: user. },
+        user: { id: user.id, name: user.name, cpf: user.cpf },
       });
     } else {
       return res.json({ exists: false, requiresRegistration: true });
