@@ -22,9 +22,14 @@ export function generateStyledOrderPdf(order, res) {
   doc
     .fontSize(18)
     .font("Helvetica-Bold")
-    .text("ORÇAMENTO (entre em contato para cotar seu frete 11-942058445)", 0, y, {
-      align: "center",
-    });
+    .text(
+      "ORÇAMENTO (entre em contato para cotar seu frete 11-942058445)",
+      0,
+      y,
+      {
+        align: "center",
+      },
+    );
   y += 40;
 
   // Dados do cliente
@@ -66,6 +71,14 @@ export function generateStyledOrderPdf(order, res) {
   const leftX = 40;
   const rightX = 340;
   const blocoY = y;
+  // --- CPF/CNPJ ---
+  let docLabel = "CPF";
+  let docValue = "-";
+  if (order.cpf && typeof order.cpf === "string") {
+    const cleanDoc = order.cpf.replace(/\D/g, "");
+    if (cleanDoc.length === 14) docLabel = "CNPJ";
+    docValue = order.cpf;
+  }
   doc
     .fontSize(12)
     .font("Helvetica-Bold")
@@ -75,7 +88,8 @@ export function generateStyledOrderPdf(order, res) {
     .text(`Telefone: ${telefoneCliente}`, leftX, blocoY + 36)
     .text(`E-mail: ${emailCliente}`, leftX, blocoY + 54)
     .text(`Endereço: ${enderecoCliente}`, leftX, blocoY + 72)
-    .text(`CEP: ${cepCliente}`, leftX, blocoY + 90);
+    .text(`CEP: ${cepCliente}`, leftX, blocoY + 90)
+    .text(`${docLabel}: ${docValue}`, leftX, blocoY + 108);
 
   doc
     .fontSize(12)

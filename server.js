@@ -476,22 +476,42 @@ async function initDatabase() {
   // ...existing code...
   // ========== LOGIN POR CPF E SENHA ===========
   app.post("/api/users/login", async (req, res) => {
-    const { cpf, password } = req.body;
+    const { cpf, password } = req.body; // Mantemos 'cpf' no destructuring para não quebrar o contrato
+
     if (!cpf || !password) {
-      return res.status(400).json({ error: "CPF e senha obrigatórios" });
+      return res.status(400).json({ error: "Documento e senha obrigatórios" });
     }
-    const cpfClean = String(cpf).replace(/\D/g, "");
+
+    const docClean = String(cpf).replace(/\D/g, "");
+
+    // Validação de tamanho para evitar consultas desnecessárias
+    if (docClean.length !== 11 && docClean.length !== 14) {
+      return res
+        .status(400)
+        .json({ error: "Documento inválido. Deve ser CPF ou CNPJ." });
+    }
+
     try {
-      const user = await db("users").where({ cpf: cpfClean }).first();
+      const user = await db("users").where({ cpf: docClean }).first();
+
       if (!user) {
         return res.status(404).json({ error: "Usuário não encontrado" });
       }
+
+      // Nota: Em produção, use bcrypt para comparar senhas!
       if (user.password !== password) {
         return res.status(401).json({ error: "Senha incorreta" });
       }
+
       res.json({
         success: true,
-        user: { ...user, historico: parseJSON(user.historico) },
+        user: {
+          ...user,
+          historico:
+            typeof user.historico === "string"
+              ? JSON.parse(user.historico)
+              : user.historico,
+        },
       });
     } catch (e) {
       console.error("❌ Erro ao autenticar usuário:", e);
@@ -990,16 +1010,19 @@ app.delete(
   },
 );
 
-// Buscar usuário por CPF
+// Buscar usuário por CPF ou CNPJ
 app.get("/api/users/cpf/:cpf", async (req, res) => {
   try {
-    const cpfClean = String(req.params.cpf).replace(/\D/g, "");
+    const docClean = String(req.params.cpf).replace(/\D/g, "");
 
-    if (cpfClean.length !== 11) {
-      return res.status(400).json({ error: "CPF inválido" });
+    // Aceita tanto 11 (CPF) quanto 14 (CNPJ)
+    if (docClean.length !== 11 && docClean.length !== 14) {
+      return res
+        .status(400)
+        .json({ error: "Documento inválido. Digite 11 ou 14 dígitos." });
     }
 
-    const user = await db("users").where({ cpf: cpfClean }).first();
+    const user = await db("users").where({ cpf: docClean }).first();
 
     if (!user) {
       return res.status(404).json({ error: "Usuário não encontrado" });
@@ -1010,7 +1033,7 @@ app.get("/api/users/cpf/:cpf", async (req, res) => {
       historico: parseJSON(user.historico),
     });
   } catch (e) {
-    console.error("Erro ao buscar usuário por CPF:", e);
+    console.error("❌ Erro ao buscar usuário por documento:", e);
     res.status(500).json({ error: "Erro ao buscar usuário" });
   }
 });
@@ -1018,8 +1041,16 @@ app.get("/api/users/cpf/:cpf", async (req, res) => {
 app.get("/api/users", authenticateToken, authorizeAdmin, async (req, res) => {
   try {
     const users = await db("users").select("*");
-    res.json(users.map((u) => ({ ...u, historico: parseJSON(u.historico) })));
+
+    // Mapeia os usuários garantindo que o histórico seja sempre um objeto/array válido
+    const formattedUsers = users.map((u) => ({
+      ...u,
+      historico: parseJSON(u.historico),
+    }));
+
+    res.json(formattedUsers);
   } catch (e) {
+    console.error("❌ Erro ao listar usuários:", e);
     res.status(500).json({ error: "Erro ao buscar usuários" });
   }
 });
@@ -1041,71 +1072,56 @@ app.get(
 );
 
 // ========== PASSO 1: Verificar se CPF existe (NÃO cria usuário) ==========
-app.post("/api/users/check-cpf", async (req, res) => {
+// ========== VERIFICAR EXISTÊNCIA DE CPF/CNPJ ===========
+app.post("/api/", async (req, res) => {
   const { cpf } = req.body;
-  console.log(`🔍 [CHECK-CPF] CPF: ${cpf}`);
+  const docClean = String(cpf).replace(/\D/g, "");
 
-  if (!cpf) {
-    return res.status(400).json({ error: "CPF obrigatório" });
-  }
-
-  const cpfClean = String(cpf).replace(/\D/g, "");
-
-  if (cpfClean.length !== 11) {
-    return res.status(400).json({ error: "CPF inválido" });
+  if (docClean.length !== 11 && docClean.length !== 14) {
+    return res.status(400).json({ error: "Documento inválido" });
   }
 
   try {
-    // Busca usuário no sistema (single-tenant)
-    const user = await db("users").where({ cpf: cpfClean }).first();
+    const user = await db("users").where({ cpf: docClean }).first();
 
     if (user) {
-      console.log(`✅ CPF encontrado: ${user.name} (${cpfClean})`);
       return res.json({
         exists: true,
-        requiresRegistration: false,
-        user: {
-          ...user,
-          historico: parseJSON(user.historico),
-        },
+        user: { id: user.id, name: user.name, cpf: user. },
       });
+    } else {
+      return res.json({ exists: false, requiresRegistration: true });
     }
-
-    console.log(`📋 CPF não encontrado: ${cpfClean} - necessário cadastro`);
-    return res.json({
-      exists: false,
-      requiresRegistration: true,
-      cpf: cpfClean,
-    });
   } catch (e) {
-    console.error("❌ Erro ao verificar CPF:", e);
-    res.status(500).json({ error: "Erro ao verificar CPF" });
+    res.status(500).json({ error: "Erro ao consultar banco de dados" });
   }
 });
 
 // ========== PASSO 2: Cadastrar novo usuário (APENAS se não existir) ==========
 app.post("/api/users/register", async (req, res) => {
   const { cpf, name, email, cep, address, phone, password } = req.body;
-  console.log(`📝 [REGISTER] Nome: ${name}, CPF: ${cpf}`);
+  console.log(`📝 [REGISTER] Nome: ${name}, Documento: ${cpf}`);
 
+  // Validação de campos obrigatórios
   if (!cpf || !name || !email || !cep || !address || !phone || !password) {
     return res.status(400).json({ error: "Todos os campos são obrigatórios" });
   }
 
-  const cpfClean = String(cpf).replace(/\D/g, "");
+  const docClean = String(cpf).replace(/\D/g, "");
 
-  if (cpfClean.length !== 11) {
-    return res.status(400).json({ error: "CPF inválido" });
+  // AJUSTE: Aceita 11 (CPF) ou 14 (CNPJ)
+  if (docClean.length !== 11 && docClean.length !== 14) {
+    return res.status(400).json({ error: "Documento inválido. Digite 11 dígitos para CPF ou 14 para CNPJ." });
   }
 
   try {
-    // Verifica se já existe (single-tenant)
-    const exists = await db("users").where({ cpf: cpfClean }).first();
+    // Verifica se já existe
+    const exists = await db("users").where({ cpf: docClean }).first();
 
     if (exists) {
-      console.log(`⚠️ Tentativa de cadastro duplicado: ${cpfClean}`);
+      console.log(`⚠️ Tentativa de cadastro duplicado: ${docClean}`);
       return res.status(409).json({
-        error: "CPF já cadastrado",
+        error: "Este documento já está cadastrado",
         user: {
           ...exists,
           historico: parseJSON(exists.historico),
@@ -1113,15 +1129,15 @@ app.post("/api/users/register", async (req, res) => {
       });
     }
 
-    // Cria novo usuário (single-tenant)
-    console.log(`📝 Cadastrando novo usuário: ${name} (${cpfClean})`);
+    // Cria novo usuário
+    console.log(`📝 Cadastrando novo usuário: ${name} (${docClean})`);
 
     const newUser = {
-      password: password,
+      password: password, // Lembrete: considere usar bcrypt no futuro para segurança
       id: `user_${Date.now()}`,
       name: name.trim(),
       email: email.trim(),
-      cpf: cpfClean,
+      cpf: docClean, // Armazenamos o CNPJ aqui normalmente
       cep: cep.trim(),
       address: address.trim(),
       phone: phone.trim(),
@@ -1149,16 +1165,23 @@ app.post("/api/users/register", async (req, res) => {
 
 app.post("/api/users", async (req, res) => {
   const { cpf, name, email, id } = req.body;
-  if (!cpf) return res.status(400).json({ error: "CPF obrigatório" });
-  const cpfClean = String(cpf).replace(/\D/g, "");
+  
+  if (!cpf) return res.status(400).json({ error: "Documento (CPF/CNPJ) obrigatório" });
+  
+  const docClean = String(cpf).replace(/\D/g, "");
+
+  // Validação para aceitar 11 ou 14 dígitos
+  if (docClean.length !== 11 && docClean.length !== 14) {
+    return res.status(400).json({ error: "Documento inválido. Use 11 dígitos para CPF ou 14 para CNPJ." });
+  }
 
   try {
-    // Verifica se usuário já existe
-    const exists = await db("users").where({ cpf: cpfClean }).first();
+    // Verifica se usuário já existe (usando o documento limpo)
+    const exists = await db("users").where({ cpf: docClean }).first();
 
     if (exists) {
       console.log(
-        `ℹ️ CPF ${cpfClean} já cadastrado - retornando usuário existente`,
+        `ℹ️ Documento ${docClean} já cadastrado - retornando usuário existente`,
       );
       return res.json({
         ...exists,
@@ -1172,13 +1195,18 @@ app.post("/api/users", async (req, res) => {
       id: id || `user_${Date.now()}`,
       name: name || "Sem Nome",
       email: email || "",
-      cpf: cpfClean,
+      cpf: docClean,
       historico: JSON.stringify([]),
       pontos: 0,
+      role: "customer" // Adicionado para manter consistência com outros cadastros
     };
+
     await db("users").insert(newUser);
+    
+    console.log(`✅ Novo usuário (Doc: ${docClean}) criado com sucesso.`);
     res.status(201).json({ ...newUser, historico: [] });
   } catch (e) {
+    console.error("❌ Erro ao salvar usuário:", e);
     res.status(500).json({ error: "Erro ao salvar usuário" });
   }
 });
@@ -1249,6 +1277,7 @@ app.post("/api/orders", async (req, res) => {
   const {
     userId,
     userName,
+    userDoc,
     items,
     total,
     paymentId,
@@ -1269,7 +1298,7 @@ app.post("/api/orders", async (req, res) => {
           id: userId,
           name: userName || "Convidado",
           email: null,
-          cpf: null,
+          cpf: userDoc ? String(userDoc).replace(/\D/g, "") : null, // Salva o CPF/CNPJ aqui!
           historico: "[]",
           pontos: 0,
         });
