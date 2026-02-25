@@ -1626,9 +1626,11 @@ app.delete(
         console.log(`✅ Reserva liberada!`);
       }
 
+
+      // Deleta o pedido do banco
       await db("orders")
         .where({ id: req.params.id })
-        .update({ status: "completed" });
+        .del();
 
       res.json({ ok: true });
     } catch (e) {
