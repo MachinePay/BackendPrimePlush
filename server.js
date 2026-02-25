@@ -1628,7 +1628,7 @@ app.delete(
 
       await db("orders")
         .where({ id: req.params.id })
-        .update({ status: "completed", completedAt: new Date().toISOString() });
+        .update({ status: "completed" });
 
       res.json({ ok: true });
     } catch (e) {
