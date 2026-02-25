@@ -1,3 +1,4 @@
+
 // ...existing code...
 // ...existing code...
 // ...existing code...
@@ -1009,6 +1010,26 @@ app.delete(
     }
   },
 );
+
+// Verificar se CPF ou CNPJ existe (POST)
+app.post("/api/users/check-cpf", async (req, res) => {
+  try {
+    const { cpf } = req.body;
+    const docClean = String(cpf).replace(/\D/g, "");
+    if (docClean.length !== 11 && docClean.length !== 14) {
+      return res.status(400).json({ error: "Documento inválido. Digite 11 ou 14 dígitos." });
+    }
+    const user = await db("users").where({ cpf: docClean }).first();
+    if (user) {
+      return res.json({ exists: true, user });
+    } else {
+      return res.json({ exists: false, requiresRegistration: true });
+    }
+  } catch (e) {
+    console.error("❌ Erro ao verificar documento:", e);
+    res.status(500).json({ error: "Erro ao verificar documento" });
+  }
+});
 
 // Buscar usuário por CPF ou CNPJ
 app.get("/api/users/cpf/:cpf", async (req, res) => {
