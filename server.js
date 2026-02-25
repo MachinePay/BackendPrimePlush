@@ -3206,7 +3206,6 @@ app.post("/api/ai/suggestion", async (req, res) => {
     const products = await db("products").select(
       "id",
       "name",
-      "description",
       "price",
       "category",
       "stock",
