@@ -866,6 +866,7 @@ app.put(
       priceRaw,
       category,
       imageUrl,
+      images,
       videoUrl,
       popular,
       stock,
@@ -1200,12 +1201,9 @@ app.post("/api/users/register", async (req, res) => {
 
   // AJUSTE: Aceita 11 (CPF) ou 14 (CNPJ)
   if (docClean.length !== 11 && docClean.length !== 14) {
-    return res
-      .status(400)
-      .json({
-        error:
-          "Documento inválido. Digite 11 dígitos para CPF ou 14 para CNPJ.",
-      });
+    return res.status(400).json({
+      error: "Documento inválido. Digite 11 dígitos para CPF ou 14 para CNPJ.",
+    });
   }
 
   try {
@@ -1267,11 +1265,9 @@ app.post("/api/users", async (req, res) => {
 
   // Validação para aceitar 11 ou 14 dígitos
   if (docClean.length !== 11 && docClean.length !== 14) {
-    return res
-      .status(400)
-      .json({
-        error: "Documento inválido. Use 11 dígitos para CPF ou 14 para CNPJ.",
-      });
+    return res.status(400).json({
+      error: "Documento inválido. Use 11 dígitos para CPF ou 14 para CNPJ.",
+    });
   }
 
   try {
