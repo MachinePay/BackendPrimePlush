@@ -1,4 +1,5 @@
 
+
 // ...existing code...
 // ...existing code...
 // ...existing code...
@@ -1385,6 +1386,19 @@ app.post("/api/orders", async (req, res) => {
   } catch (e) {
     console.error("❌ Erro ao salvar pedido:", e);
     res.status(500).json({ error: e.message || "Erro ao salvar ordem" });
+  }
+});
+
+// Buscar pedidos do usuário pelo userId
+app.get("/api/users/:userId/orders", async (req, res) => {
+  try {
+    const { userId } = req.params;
+    if (!userId) return res.status(400).json({ error: "userId obrigatório" });
+    const orders = await db("orders").where({ userId }).orderBy("timestamp", "desc");
+    res.json(orders);
+  } catch (e) {
+    console.error("❌ Erro ao buscar pedidos do usuário:", e);
+    res.status(500).json({ error: "Erro ao buscar pedidos do usuário" });
   }
 });
 
