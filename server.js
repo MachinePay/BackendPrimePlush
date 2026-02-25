@@ -1,5 +1,3 @@
-
-
 // ...existing code...
 // ...existing code...
 // ...existing code...
@@ -293,6 +291,7 @@ async function initDatabase() {
       table.string("category").notNullable();
       table.string("videoUrl");
       table.string("imageUrl"); // URL da imagem do produto
+      table.text("images"); // Lista de URLs das imagens (JSON)
       table.boolean("popular").defaultTo(false);
       table.integer("stock"); // NULL = estoque ilimitado, 0 = esgotado
       table.integer("stock_reserved").defaultTo(0); // Estoque reservado temporariamente
@@ -354,6 +353,13 @@ async function initDatabase() {
         table.integer("stock");
       });
       console.log("✅ Coluna stock adicionada à tabela products");
+    }
+    const hasImages = await db.schema.hasColumn("products", "images");
+    if (!hasImages) {
+      await db.schema.table("products", (table) => {
+        table.text("images");
+      });
+      console.log("✅ Coluna images adicionada à tabela products");
     }
   }
 
@@ -672,6 +678,14 @@ app.get("/api/menu", async (req, res) => {
 
     res.json(
       products.map((p) => {
+        const parsedImages = parseJSON(p.images);
+        const normalizedImages =
+          Array.isArray(parsedImages) && parsedImages.length > 0
+            ? parsedImages
+            : p.imageUrl
+              ? [p.imageUrl]
+              : [];
+
         const stockAvailable =
           p.stock === null
             ? null // ilimitado
@@ -681,6 +695,8 @@ app.get("/api/menu", async (req, res) => {
           ...p,
           price: parseFloat(p.price),
           priceRaw: p.priceRaw !== undefined ? parseFloat(p.priceRaw) : 0,
+          imageUrl: normalizedImages[0] || p.imageUrl || null,
+          images: normalizedImages,
           stock: p.stock,
           stock_reserved: p.stock_reserved || 0,
           stock_available: stockAvailable,
@@ -747,7 +763,23 @@ app.get(
   async (req, res) => {
     try {
       const products = await db("products").select("*").orderBy("id");
-      res.json(products);
+      res.json(
+        products.map((p) => {
+          const parsedImages = parseJSON(p.images);
+          const normalizedImages =
+            Array.isArray(parsedImages) && parsedImages.length > 0
+              ? parsedImages
+              : p.imageUrl
+                ? [p.imageUrl]
+                : [];
+
+          return {
+            ...p,
+            imageUrl: normalizedImages[0] || p.imageUrl || null,
+            images: normalizedImages,
+          };
+        }),
+      );
     } catch (e) {
       console.error("Erro ao buscar todos os produtos:", e);
       res.status(500).json({ error: "Erro ao buscar produtos" });
@@ -766,6 +798,8 @@ app.post(
       price,
       priceRaw,
       category,
+      imageUrl,
+      images,
       videoUrl,
       popular,
       stock,
@@ -779,12 +813,24 @@ app.post(
     }
 
     try {
+      const normalizedImages = Array.isArray(images)
+        ? images
+            .map((url) => (typeof url === "string" ? url.trim() : ""))
+            .filter((url) => !!url)
+        : [];
+      const primaryImage =
+        imageUrl || normalizedImages[0] || "https://picsum.photos/400/300";
+
       const newProduct = {
         id: id || `prod_${Date.now()}`,
         name,
         price: parseFloat(price),
         priceRaw: priceRaw !== undefined ? parseFloat(priceRaw) : 0,
         category,
+        imageUrl: primaryImage,
+        images: JSON.stringify(
+          normalizedImages.length > 0 ? normalizedImages : [primaryImage],
+        ),
         videoUrl: videoUrl || "",
         popular: popular || false,
         stock: stock !== undefined ? parseInt(stock) : null, // null = ilimitado
@@ -798,6 +844,7 @@ app.post(
       await db("products").insert(newProduct);
       res.status(201).json({
         ...newProduct,
+        images: parseJSON(newProduct.images),
         isAvailable: newProduct.stock === null || newProduct.stock > 0,
       });
     } catch (e) {
@@ -840,7 +887,18 @@ app.put(
       if (price !== undefined) updates.price = parseFloat(price);
       if (priceRaw !== undefined) updates.priceRaw = parseFloat(priceRaw);
       if (category !== undefined) updates.category = category;
-      if (imageUrl !== undefined) updates.imageUrl = imageUrl;
+      if (imageUrl !== undefined) {
+        updates.imageUrl = imageUrl;
+      }
+      if (images !== undefined) {
+        const normalizedImages = Array.isArray(images)
+          ? images
+              .map((url) => (typeof url === "string" ? url.trim() : ""))
+              .filter((url) => !!url)
+          : [];
+        updates.images = JSON.stringify(normalizedImages);
+        updates.imageUrl = normalizedImages[0] || imageUrl || "";
+      }
       if (videoUrl !== undefined) updates.videoUrl = videoUrl;
       if (popular !== undefined) updates.popular = popular;
       if (stock !== undefined)
@@ -860,6 +918,13 @@ app.put(
       const updated = await db("products").where({ id }).first();
       res.json({
         ...updated,
+        images: (() => {
+          const parsedImages = parseJSON(updated.images);
+          if (Array.isArray(parsedImages) && parsedImages.length > 0) {
+            return parsedImages;
+          }
+          return updated.imageUrl ? [updated.imageUrl] : [];
+        })(),
         price: parseFloat(updated.price),
         isAvailable: updated.stock === null || updated.stock > 0,
       });
@@ -1018,7 +1083,9 @@ app.post("/api/users/check-cpf", async (req, res) => {
     const { cpf } = req.body;
     const docClean = String(cpf).replace(/\D/g, "");
     if (docClean.length !== 11 && docClean.length !== 14) {
-      return res.status(400).json({ error: "Documento inválido. Digite 11 ou 14 dígitos." });
+      return res
+        .status(400)
+        .json({ error: "Documento inválido. Digite 11 ou 14 dígitos." });
     }
     const user = await db("users").where({ cpf: docClean }).first();
     if (user) {
@@ -1133,7 +1200,12 @@ app.post("/api/users/register", async (req, res) => {
 
   // AJUSTE: Aceita 11 (CPF) ou 14 (CNPJ)
   if (docClean.length !== 11 && docClean.length !== 14) {
-    return res.status(400).json({ error: "Documento inválido. Digite 11 dígitos para CPF ou 14 para CNPJ." });
+    return res
+      .status(400)
+      .json({
+        error:
+          "Documento inválido. Digite 11 dígitos para CPF ou 14 para CNPJ.",
+      });
   }
 
   try {
@@ -1187,14 +1259,19 @@ app.post("/api/users/register", async (req, res) => {
 
 app.post("/api/users", async (req, res) => {
   const { cpf, name, email, id } = req.body;
-  
-  if (!cpf) return res.status(400).json({ error: "Documento (CPF/CNPJ) obrigatório" });
-  
+
+  if (!cpf)
+    return res.status(400).json({ error: "Documento (CPF/CNPJ) obrigatório" });
+
   const docClean = String(cpf).replace(/\D/g, "");
 
   // Validação para aceitar 11 ou 14 dígitos
   if (docClean.length !== 11 && docClean.length !== 14) {
-    return res.status(400).json({ error: "Documento inválido. Use 11 dígitos para CPF ou 14 para CNPJ." });
+    return res
+      .status(400)
+      .json({
+        error: "Documento inválido. Use 11 dígitos para CPF ou 14 para CNPJ.",
+      });
   }
 
   try {
@@ -1220,11 +1297,11 @@ app.post("/api/users", async (req, res) => {
       cpf: docClean,
       historico: JSON.stringify([]),
       pontos: 0,
-      role: "customer" // Adicionado para manter consistência com outros cadastros
+      role: "customer", // Adicionado para manter consistência com outros cadastros
     };
 
     await db("users").insert(newUser);
-    
+
     console.log(`✅ Novo usuário (Doc: ${docClean}) criado com sucesso.`);
     res.status(201).json({ ...newUser, historico: [] });
   } catch (e) {
@@ -1394,7 +1471,9 @@ app.get("/api/users/:userId/orders", async (req, res) => {
   try {
     const { userId } = req.params;
     if (!userId) return res.status(400).json({ error: "userId obrigatório" });
-    const orders = await db("orders").where({ userId }).orderBy("timestamp", "desc");
+    const orders = await db("orders")
+      .where({ userId })
+      .orderBy("timestamp", "desc");
     res.json(orders);
   } catch (e) {
     console.error("❌ Erro ao buscar pedidos do usuário:", e);
@@ -1626,11 +1705,8 @@ app.delete(
         console.log(`✅ Reserva liberada!`);
       }
 
-
       // Deleta o pedido do banco
-      await db("orders")
-        .where({ id: req.params.id })
-        .del();
+      await db("orders").where({ id: req.params.id }).del();
 
       res.json({ ok: true });
     } catch (e) {
