@@ -67,10 +67,13 @@ export function generateStyledOrderPdf(order, res) {
     order.userCep ||
     order.contactCep ||
     "-";
-  // Bloco lado a lado
+  // Blocos lado a lado com altura dinâmica (evita sobreposição)
   const leftX = 40;
   const rightX = 340;
   const blocoY = y;
+  const leftWidth = rightX - leftX - 20;
+  const rightWidth = doc.page.width - rightX - 40;
+
   // --- CPF/CNPJ ---
   let docLabel = "CPF";
   let docValue = "-";
@@ -79,34 +82,95 @@ export function generateStyledOrderPdf(order, res) {
     if (cleanDoc.length === 14) docLabel = "CNPJ";
     docValue = order.cpf;
   }
-  doc
-    .fontSize(12)
-    .font("Helvetica-Bold")
-    .text("DADOS DO CLIENTE", leftX, blocoY)
-    .font("Helvetica")
-    .text(`Nome: ${nomeCliente}`, leftX, blocoY + 18)
-    .text(`Telefone: ${telefoneCliente}`, leftX, blocoY + 36)
-    .text(`E-mail: ${emailCliente}`, leftX, blocoY + 54)
-    .text(`Endereço: ${enderecoCliente}`, leftX, blocoY + 72)
-    .text(`CEP: ${cepCliente}`, leftX, blocoY + 90)
-    .text(`${docLabel}: ${docValue}`, leftX, blocoY + 108);
 
-  doc
-    .fontSize(12)
-    .font("Helvetica-Bold")
-    .text("FORMA DE PAGAMENTO", rightX, blocoY)
-    .font("Helvetica")
-    .text(
-      order.paymentType ||
-        order.payment_method ||
-        order.payment_method_id ||
-        order.paymentStatus ||
-        "-",
-      rightX,
-      blocoY + 18,
-    );
+  doc.fontSize(12).font("Helvetica-Bold");
+  doc.text("DADOS DO CLIENTE", leftX, blocoY, {
+    width: leftWidth,
+  });
 
-  y = blocoY + 110;
+  let leftCurrentY =
+    blocoY + doc.heightOfString("DADOS DO CLIENTE", { width: leftWidth }) + 6;
+  const customerLines = [
+    `Nome: ${nomeCliente}`,
+    `Telefone: ${telefoneCliente}`,
+    `E-mail: ${emailCliente}`,
+    `Endereço: ${enderecoCliente}`,
+    `CEP: ${cepCliente}`,
+    `${docLabel}: ${docValue}`,
+  ];
+
+  customerLines.forEach((line) => {
+    doc.font("Helvetica").fontSize(11);
+    doc.text(line, leftX, leftCurrentY, {
+      width: leftWidth,
+    });
+    leftCurrentY += doc.heightOfString(line, { width: leftWidth }) + 4;
+  });
+
+  doc.fontSize(12).font("Helvetica-Bold");
+  doc.text("FORMA DE PAGAMENTO", rightX, blocoY, { width: rightWidth });
+
+  let rightCurrentY =
+    blocoY +
+    doc.heightOfString("FORMA DE PAGAMENTO", { width: rightWidth }) +
+    6;
+  const paymentMain =
+    order.paymentType ||
+    order.payment_method ||
+    order.payment_method_id ||
+    order.paymentStatus ||
+    "-";
+
+  doc.font("Helvetica").fontSize(11);
+  doc.text(paymentMain, rightX, rightCurrentY, {
+    width: rightWidth,
+  });
+  rightCurrentY += doc.heightOfString(paymentMain, { width: rightWidth }) + 4;
+
+  // Detalhes extra para pagamento presencial
+  if (paymentMain === "presencial") {
+    const tipoPagamento =
+      order.paymentMethod ||
+      order.payment_method ||
+      order.payment_method_id ||
+      "-";
+    const vezes =
+      order.installments ||
+      order.parcelas ||
+      order.qtdParcelas ||
+      order.paymentInstallments ||
+      1;
+
+    let tipoDesc = "";
+    if (typeof tipoPagamento === "string") {
+      if (tipoPagamento.toLowerCase().includes("pix")) tipoDesc = "PIX";
+      else if (tipoPagamento.toLowerCase().includes("debito"))
+        tipoDesc = "Cartão Débito";
+      else if (tipoPagamento.toLowerCase().includes("credito"))
+        tipoDesc = "Cartão Crédito";
+      else tipoDesc = tipoPagamento;
+    }
+
+    const tipoText = `Tipo: ${tipoDesc}`;
+    doc.fontSize(11).font("Helvetica").text(tipoText, rightX, rightCurrentY, {
+      width: rightWidth,
+    });
+    rightCurrentY += doc.heightOfString(tipoText, { width: rightWidth }) + 4;
+
+    if (vezes > 1) {
+      const parceladoText = `Parcelado: ${vezes}x`;
+      doc
+        .fontSize(11)
+        .font("Helvetica")
+        .text(parceladoText, rightX, rightCurrentY, {
+          width: rightWidth,
+        });
+      rightCurrentY +=
+        doc.heightOfString(parceladoText, { width: rightWidth }) + 4;
+    }
+  }
+
+  y = Math.max(leftCurrentY, rightCurrentY) + 16;
 
   // Tabela de produtos
   doc.font("Helvetica-Bold").fontSize(14).text("PRODUTOS", 40, y);
@@ -171,43 +235,6 @@ export function generateStyledOrderPdf(order, res) {
       { width: 500 },
     );
   y += 44;
-
-  // Detalhes extra para pagamento presencial (apenas uma vez)
-  if (
-    (order.paymentType || order.payment_method || order.payment_method_id) ===
-    "presencial"
-  ) {
-    const tipoPagamento =
-      order.paymentMethod ||
-      order.payment_method ||
-      order.payment_method_id ||
-      "-";
-    const vezes =
-      order.installments ||
-      order.parcelas ||
-      order.qtdParcelas ||
-      order.paymentInstallments ||
-      1;
-    let tipoDesc = "";
-    if (typeof tipoPagamento === "string") {
-      if (tipoPagamento.toLowerCase().includes("pix")) tipoDesc = "PIX";
-      else if (tipoPagamento.toLowerCase().includes("debito"))
-        tipoDesc = "Cartão Débito";
-      else if (tipoPagamento.toLowerCase().includes("credito"))
-        tipoDesc = "Cartão Crédito";
-      else tipoDesc = tipoPagamento;
-    }
-    doc
-      .fontSize(11)
-      .font("Helvetica")
-      .text(`Tipo: ${tipoDesc}`, rightX, blocoY + 36);
-    if (vezes > 1) {
-      doc
-        .fontSize(11)
-        .font("Helvetica")
-        .text(`Parcelado: ${vezes}x`, rightX, blocoY + 54);
-    }
-  }
 
   doc.end();
 }
