@@ -761,14 +761,10 @@ app.get(
   authorizeAdmin,
   async (req, res) => {
     try {
-      const paidOrders = await db("orders")
-        .whereIn("paymentStatus", ["paid", "authorized"])
-        .select("id", "items", "total", "timestamp");
-
       const receivablesRows = await db("super_admin_receivables").select(
         "order_ids",
       );
-      const processedOrderIds = new Set();
+      const alreadyProcessedIds = [];
 
       receivablesRows.forEach((row) => {
         if (!row?.order_ids) return;
@@ -776,13 +772,28 @@ app.get(
           const ids = JSON.parse(row.order_ids);
           if (Array.isArray(ids)) {
             ids.forEach((id) => {
-              if (id) processedOrderIds.add(String(id));
+              if (id) {
+                const normalizedId = String(id);
+                alreadyProcessedIds.push(normalizedId);
+              }
             });
           }
         } catch (e) {
           // Ignore linhas inválidas de histórico
         }
       });
+
+      const paidOrders = await db("orders")
+        .whereIn("paymentStatus", ["paid", "authorized"])
+        .select("id", "items", "total", "timestamp");
+
+      const pendingPaidOrders = await db("orders")
+        .whereIn("paymentStatus", ["paid", "authorized"])
+        .whereNotIn(
+          "id",
+          alreadyProcessedIds.length > 0 ? alreadyProcessedIds : [""],
+        )
+        .select("id", "items");
 
       const productRows = await db("products").select("id", "name", "priceRaw");
       const productCostMap = new Map();
@@ -796,14 +807,34 @@ app.get(
       const productSales = new Map();
       let totalRevenue = 0;
       let totalItemsSold = 0;
-      let totalToPayGiraKids = 0;
+
+      const getUnitCostByItem = (item) => {
+        const prodId = item.productId || item.id;
+        return prodId ? productCostMap.get(String(prodId)) || 0 : 0;
+      };
+
+      const calculateOrderValueToReceive = (orderItems) => {
+        let orderValue = 0;
+        orderItems.forEach((item) => {
+          const quantity = Number(item.quantity) || 1;
+          const salePrice = Number(item.price) || 0;
+          const unitCost = getUnitCostByItem(item);
+          orderValue += (salePrice - unitCost) * quantity;
+        });
+        return orderValue;
+      };
+
+      const totalToPayGiraKids = pendingPaidOrders.reduce((sum, order) => {
+        const parsedItems = parseJSON(order.items);
+        const orderItems = Array.isArray(parsedItems) ? parsedItems : [];
+        return sum + calculateOrderValueToReceive(orderItems);
+      }, 0);
 
       paidOrders.forEach((order) => {
         totalRevenue += parseFloat(order.total) || 0;
 
         const parsedItems = parseJSON(order.items);
         const orderItems = Array.isArray(parsedItems) ? parsedItems : [];
-        const isProcessed = processedOrderIds.has(String(order.id));
 
         orderItems.forEach((item) => {
           const quantity = Number(item.quantity) || 1;
@@ -814,25 +845,12 @@ app.get(
           const itemName =
             item.name || productNameMap.get(itemId) || "Produto sem nome";
 
-          const itemCostFromOrder =
-            item.precoBruto !== undefined && item.precoBruto !== null
-              ? Number(item.precoBruto)
-              : item.priceRaw !== undefined && item.priceRaw !== null
-                ? Number(item.priceRaw)
-                : NaN;
-
-          const unitCost = Number.isFinite(itemCostFromOrder)
-            ? itemCostFromOrder
-            : productCostMap.get(itemId) || 0;
+          const unitCost = getUnitCostByItem(item);
 
           const itemRevenue = salePrice * quantity;
           const itemValueToReceive = (salePrice - unitCost) * quantity;
 
           totalItemsSold += quantity;
-
-          if (!isProcessed) {
-            totalToPayGiraKids += itemValueToReceive;
-          }
 
           const existing = productSales.get(itemId) || {
             productId: itemId,
