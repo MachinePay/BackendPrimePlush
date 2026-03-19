@@ -754,6 +754,144 @@ const authorizeKitchen = (req, res, next) => {
   next();
 };
 
+// Relatório de gestão para admin (usa a mesma base de cálculo do superadmin)
+app.get(
+  "/api/admin/management-report",
+  authenticateToken,
+  authorizeAdmin,
+  async (req, res) => {
+    try {
+      const paidOrders = await db("orders")
+        .whereIn("paymentStatus", ["paid", "authorized"])
+        .select("id", "items", "total", "timestamp");
+
+      const receivablesRows = await db("super_admin_receivables").select(
+        "order_ids",
+      );
+      const processedOrderIds = new Set();
+
+      receivablesRows.forEach((row) => {
+        if (!row?.order_ids) return;
+        try {
+          const ids = JSON.parse(row.order_ids);
+          if (Array.isArray(ids)) {
+            ids.forEach((id) => {
+              if (id) processedOrderIds.add(String(id));
+            });
+          }
+        } catch (e) {
+          // Ignore linhas inválidas de histórico
+        }
+      });
+
+      const productRows = await db("products").select("id", "name", "priceRaw");
+      const productCostMap = new Map();
+      const productNameMap = new Map();
+
+      productRows.forEach((product) => {
+        productCostMap.set(String(product.id), Number(product.priceRaw) || 0);
+        productNameMap.set(String(product.id), product.name || "Produto");
+      });
+
+      const productSales = new Map();
+      let totalRevenue = 0;
+      let totalItemsSold = 0;
+      let totalToPayGiraKids = 0;
+
+      paidOrders.forEach((order) => {
+        totalRevenue += parseFloat(order.total) || 0;
+
+        const parsedItems = parseJSON(order.items);
+        const orderItems = Array.isArray(parsedItems) ? parsedItems : [];
+        const isProcessed = processedOrderIds.has(String(order.id));
+
+        orderItems.forEach((item) => {
+          const quantity = Number(item.quantity) || 1;
+          const salePrice = Number(item.price) || 0;
+          const itemId = String(
+            item.productId || item.id || item.name || "sem-id",
+          );
+          const itemName =
+            item.name || productNameMap.get(itemId) || "Produto sem nome";
+
+          const itemCostFromOrder =
+            item.precoBruto !== undefined && item.precoBruto !== null
+              ? Number(item.precoBruto)
+              : item.priceRaw !== undefined && item.priceRaw !== null
+                ? Number(item.priceRaw)
+                : NaN;
+
+          const unitCost = Number.isFinite(itemCostFromOrder)
+            ? itemCostFromOrder
+            : productCostMap.get(itemId) || 0;
+
+          const itemRevenue = salePrice * quantity;
+          const itemValueToReceive = (salePrice - unitCost) * quantity;
+
+          totalItemsSold += quantity;
+
+          if (!isProcessed) {
+            totalToPayGiraKids += itemValueToReceive;
+          }
+
+          const existing = productSales.get(itemId) || {
+            productId: itemId,
+            name: itemName,
+            quantitySold: 0,
+            revenue: 0,
+            giraKidsValue: 0,
+          };
+
+          existing.quantitySold += quantity;
+          existing.revenue += itemRevenue;
+          existing.giraKidsValue += itemValueToReceive;
+
+          productSales.set(itemId, existing);
+        });
+      });
+
+      const totalPaidRow = await db("super_admin_receivables")
+        .sum("amount as total")
+        .first();
+
+      const totalPaidToGiraKids = parseFloat(totalPaidRow?.total) || 0;
+      const pendingToPay = Math.max(0, totalToPayGiraKids);
+
+      const products = Array.from(productSales.values())
+        .sort(
+          (a, b) => b.quantitySold - a.quantitySold || b.revenue - a.revenue,
+        )
+        .map((product) => ({
+          ...product,
+          revenue: Number(product.revenue.toFixed(2)),
+          giraKidsValue: Number(product.giraKidsValue.toFixed(2)),
+        }));
+
+      return res.json({
+        success: true,
+        summary: {
+          totalOrders: paidOrders.length,
+          totalItemsSold,
+          totalRevenue: Number(totalRevenue.toFixed(2)),
+          totalToPayGiraKids: Number(pendingToPay.toFixed(2)),
+          totalPaidToGiraKids: Number(totalPaidToGiraKids.toFixed(2)),
+          totalGiraKidsAccrued: Number(
+            (pendingToPay + totalPaidToGiraKids).toFixed(2),
+          ),
+        },
+        products,
+        generatedAt: new Date().toISOString(),
+      });
+    } catch (error) {
+      console.error("❌ Erro ao gerar relatório de gestão:", error);
+      return res.status(500).json({
+        error: "Erro ao gerar relatório de gestão",
+        message: error.message,
+      });
+    }
+  },
+);
+
 // CRUD de Produtos (Admin)
 
 app.get(
