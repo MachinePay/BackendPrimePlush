@@ -981,20 +981,38 @@ app.get(
           ),
       );
 
+      const processedOrderIdsSet = new Set(alreadyProcessedIds);
+
       const pendingPaidOrders = paidOrders.filter(
-        (order) => !alreadyProcessedIds.includes(String(order.id)),
+        (order) => !processedOrderIdsSet.has(String(order.id)),
       );
 
-      const productRows = await db("products").select("id", "name", "priceRaw");
-      const productCostMap = new Map();
-      const productNameMap = new Map();
+      const productRows = await db("products").select(
+        "id",
+        "name",
+        "priceRaw",
+        "category",
+        "stock",
+        "minStock",
+      );
+      const productMetaMap = new Map();
 
       productRows.forEach((product) => {
-        productCostMap.set(String(product.id), Number(product.priceRaw) || 0);
-        productNameMap.set(String(product.id), product.name || "Produto");
+        const productId = String(product.id);
+        productMetaMap.set(productId, {
+          name: product.name || "Produto",
+          unitCost: Number(product.priceRaw) || 0,
+          category: product.category || "Outros",
+          stock:
+            product.stock === null || product.stock === undefined
+              ? null
+              : Number(product.stock),
+          minStock: Number(product.minStock) || 0,
+        });
       });
 
       const productSales = new Map();
+      const categorySalesMap = new Map();
       const paymentDistributionMap = new Map();
       const dailyRevenueMap = new Map();
       const weeklyRevenueMap = new Map();
@@ -1002,9 +1020,39 @@ app.get(
       let totalRevenue = 0;
       let totalItemsSold = 0;
 
+      const calculatePeriodDays = () => {
+        if (startAt && endAt) {
+          const ms = new Date(endAt).getTime() - new Date(startAt).getTime();
+          return Math.max(1, Math.floor(ms / (24 * 60 * 60 * 1000)) + 1);
+        }
+
+        if (paidOrders.length === 0) {
+          return 1;
+        }
+
+        const validTimestamps = paidOrders
+          .map((order) => new Date(order.timestamp).getTime())
+          .filter((value) => Number.isFinite(value));
+
+        if (validTimestamps.length === 0) {
+          return 1;
+        }
+
+        const minTimestamp = Math.min(...validTimestamps);
+        const maxTimestamp = Math.max(...validTimestamps);
+        const rangeInDays =
+          Math.floor((maxTimestamp - minTimestamp) / (24 * 60 * 60 * 1000)) + 1;
+
+        return Math.max(1, rangeInDays);
+      };
+
+      const periodDays = calculatePeriodDays();
+
       const getUnitCostByItem = (item) => {
         const prodId = item.productId || item.id;
-        return prodId ? productCostMap.get(String(prodId)) || 0 : 0;
+        if (!prodId) return 0;
+        const meta = productMetaMap.get(String(prodId));
+        return meta ? meta.unitCost : 0;
       };
 
       const calculateOrderValueToReceive = (orderItems) => {
@@ -1095,8 +1143,9 @@ app.get(
           const itemId = String(
             item.productId || item.id || item.name || "sem-id",
           );
-          const itemName =
-            item.name || productNameMap.get(itemId) || "Produto sem nome";
+          const itemMeta = productMetaMap.get(itemId);
+          const itemName = item.name || itemMeta?.name || "Produto sem nome";
+          const itemCategory = itemMeta?.category || item.category || "Outros";
 
           const unitCost = getUnitCostByItem(item);
 
@@ -1108,9 +1157,12 @@ app.get(
           const existing = productSales.get(itemId) || {
             productId: itemId,
             name: itemName,
+            category: itemCategory,
             quantitySold: 0,
             revenue: 0,
             giraKidsValue: 0,
+            stock: itemMeta?.stock ?? null,
+            minStock: itemMeta?.minStock || 0,
           };
 
           existing.quantitySold += quantity;
@@ -1118,6 +1170,16 @@ app.get(
           existing.giraKidsValue += itemValueToReceive;
 
           productSales.set(itemId, existing);
+
+          const categoryEntry = categorySalesMap.get(itemCategory) || {
+            category: itemCategory,
+            quantitySold: 0,
+            revenue: 0,
+          };
+
+          categoryEntry.quantitySold += quantity;
+          categoryEntry.revenue += itemRevenue;
+          categorySalesMap.set(itemCategory, categoryEntry);
         });
       });
 
@@ -1150,7 +1212,165 @@ app.get(
           ...product,
           revenue: Number(product.revenue.toFixed(2)),
           giraKidsValue: Number(product.giraKidsValue.toFixed(2)),
+          stock:
+            product.stock === null || product.stock === undefined
+              ? null
+              : Number(product.stock),
+          minStock: Number(product.minStock) || 0,
         }));
+
+      const topProductsByVolume = products.slice(0, 10).map((product) => ({
+        productId: product.productId,
+        name: product.name,
+        category: product.category || "Outros",
+        quantitySold: product.quantitySold,
+        revenue: Number(product.revenue.toFixed(2)),
+      }));
+
+      const totalRevenueForAbc = products.reduce(
+        (sum, product) => sum + product.revenue,
+        0,
+      );
+      let cumulativeShare = 0;
+      const abcCurve = [...products]
+        .sort((a, b) => b.revenue - a.revenue)
+        .map((product, index) => {
+          const revenueShare = totalRevenueForAbc
+            ? (product.revenue / totalRevenueForAbc) * 100
+            : 0;
+          cumulativeShare += revenueShare;
+
+          const normalizedCumulative = Math.min(100, cumulativeShare);
+          let classification = "C";
+
+          if (normalizedCumulative <= 80 || index === 0) {
+            classification = "A";
+          } else if (normalizedCumulative <= 95) {
+            classification = "B";
+          }
+
+          return {
+            productId: product.productId,
+            name: product.name,
+            category: product.category || "Outros",
+            quantitySold: product.quantitySold,
+            revenue: Number(product.revenue.toFixed(2)),
+            revenueShare: Number(revenueShare.toFixed(2)),
+            cumulativeShare: Number(normalizedCumulative.toFixed(2)),
+            classification,
+          };
+        });
+
+      const totalCategoryRevenue = Array.from(categorySalesMap.values()).reduce(
+        (sum, category) => sum + category.revenue,
+        0,
+      );
+      const categoryPerformance = Array.from(categorySalesMap.values())
+        .sort((a, b) => b.revenue - a.revenue)
+        .map((category) => ({
+          category: category.category,
+          quantitySold: category.quantitySold,
+          revenue: Number(category.revenue.toFixed(2)),
+          revenueShare: Number(
+            (totalCategoryRevenue
+              ? (category.revenue / totalCategoryRevenue) * 100
+              : 0
+            ).toFixed(2),
+          ),
+        }));
+
+      const soldByProductMap = new Map();
+      products.forEach((product) => {
+        soldByProductMap.set(product.productId, {
+          quantitySold: product.quantitySold,
+          revenue: product.revenue,
+        });
+      });
+
+      const stockAlerts = [];
+      productRows.forEach((product) => {
+        const productId = String(product.id);
+        const stock =
+          product.stock === null || product.stock === undefined
+            ? null
+            : Number(product.stock);
+
+        if (stock === null || Number.isNaN(stock)) {
+          return;
+        }
+
+        const soldInfo = soldByProductMap.get(productId) || {
+          quantitySold: 0,
+          revenue: 0,
+        };
+
+        const minStock = Number(product.minStock) || 0;
+        const averageDailySales = soldInfo.quantitySold / periodDays;
+        const safetyStock = Math.max(
+          minStock,
+          Math.ceil(averageDailySales * 7),
+        );
+        const daysToStockout =
+          averageDailySales > 0 ? stock / averageDailySales : null;
+
+        let severity = "";
+        if (stock <= minStock) {
+          severity = "critical";
+        } else if (
+          stock <= safetyStock ||
+          (daysToStockout !== null && daysToStockout <= 7)
+        ) {
+          severity = "warning";
+        }
+
+        if (!severity) {
+          return;
+        }
+
+        const recommendedStock = Math.max(
+          safetyStock,
+          Math.ceil(averageDailySales * 14),
+        );
+        const suggestedPurchase = Math.max(0, recommendedStock - stock);
+
+        stockAlerts.push({
+          productId,
+          name: product.name || "Produto",
+          category: product.category || "Outros",
+          stock,
+          minStock,
+          safetyStock,
+          quantitySold: soldInfo.quantitySold,
+          revenue: Number((soldInfo.revenue || 0).toFixed(2)),
+          averageDailySales: Number(averageDailySales.toFixed(2)),
+          daysToStockout:
+            daysToStockout === null ? null : Number(daysToStockout.toFixed(1)),
+          suggestedPurchase,
+          severity,
+        });
+      });
+
+      const severityOrder = {
+        critical: 0,
+        warning: 1,
+      };
+      stockAlerts.sort((a, b) => {
+        const severityDiff =
+          severityOrder[a.severity] - severityOrder[b.severity];
+        if (severityDiff !== 0) return severityDiff;
+
+        const daysA =
+          a.daysToStockout === null
+            ? Number.POSITIVE_INFINITY
+            : a.daysToStockout;
+        const daysB =
+          b.daysToStockout === null
+            ? Number.POSITIVE_INFINITY
+            : b.daysToStockout;
+        if (daysA !== daysB) return daysA - daysB;
+
+        return a.stock - b.stock;
+      });
 
       const sortRevenueSeries = (seriesMap) =>
         Array.from(seriesMap.values())
@@ -1197,6 +1417,13 @@ app.get(
             monthly: sortRevenueSeries(monthlyRevenueMap),
           },
           paymentDistribution,
+        },
+        analytics: {
+          periodDays,
+          topProductsByVolume,
+          abcCurve,
+          categoryPerformance,
+          stockAlerts,
         },
         filters: {
           startAt: startAt || null,
