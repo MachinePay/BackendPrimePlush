@@ -761,6 +761,63 @@ app.get(
   authorizeAdmin,
   async (req, res) => {
     try {
+      const startAtRaw =
+        typeof req.query.startAt === "string" ? req.query.startAt.trim() : "";
+      const endAtRaw =
+        typeof req.query.endAt === "string" ? req.query.endAt.trim() : "";
+
+      if ((startAtRaw && !endAtRaw) || (!startAtRaw && endAtRaw)) {
+        return res.status(400).json({
+          error: "Informe a data inicial e final para aplicar o filtro.",
+        });
+      }
+
+      let startAt = "";
+      let endAt = "";
+
+      if (startAtRaw && endAtRaw) {
+        const parsedStartAt = new Date(startAtRaw);
+        const parsedEndAt = new Date(endAtRaw);
+
+        if (
+          Number.isNaN(parsedStartAt.getTime()) ||
+          Number.isNaN(parsedEndAt.getTime())
+        ) {
+          return res.status(400).json({
+            error: "Periodo informado invalido.",
+          });
+        }
+
+        if (parsedStartAt > parsedEndAt) {
+          return res.status(400).json({
+            error: "A data inicial nao pode ser maior que a final.",
+          });
+        }
+
+        startAt = parsedStartAt.toISOString();
+        endAt = parsedEndAt.toISOString();
+      }
+
+      const applyOrderDateRange = (query) => {
+        if (startAt) {
+          query.where("timestamp", ">=", startAt);
+        }
+        if (endAt) {
+          query.where("timestamp", "<=", endAt);
+        }
+        return query;
+      };
+
+      const applyReceivableDateRange = (query) => {
+        if (startAt) {
+          query.where("received_at", ">=", startAt);
+        }
+        if (endAt) {
+          query.where("received_at", "<=", endAt);
+        }
+        return query;
+      };
+
       const receivablesRows = await db("super_admin_receivables").select(
         "order_ids",
       );
@@ -783,17 +840,21 @@ app.get(
         }
       });
 
-      const paidOrders = await db("orders")
-        .whereIn("paymentStatus", ["paid", "authorized"])
-        .select("id", "items", "total", "timestamp");
+      const paidOrders = await applyOrderDateRange(
+        db("orders")
+          .whereIn("paymentStatus", ["paid", "authorized"])
+          .select("id", "items", "total", "timestamp"),
+      );
 
-      const pendingPaidOrders = await db("orders")
-        .whereIn("paymentStatus", ["paid", "authorized"])
-        .whereNotIn(
-          "id",
-          alreadyProcessedIds.length > 0 ? alreadyProcessedIds : [""],
-        )
-        .select("id", "items");
+      const pendingPaidOrders = await applyOrderDateRange(
+        db("orders")
+          .whereIn("paymentStatus", ["paid", "authorized"])
+          .whereNotIn(
+            "id",
+            alreadyProcessedIds.length > 0 ? alreadyProcessedIds : [""],
+          )
+          .select("id", "items"),
+      );
 
       const productRows = await db("products").select("id", "name", "priceRaw");
       const productCostMap = new Map();
@@ -868,7 +929,9 @@ app.get(
         });
       });
 
-      const totalPaidRow = await db("super_admin_receivables")
+      const totalPaidRow = await applyReceivableDateRange(
+        db("super_admin_receivables"),
+      )
         .sum("amount as total")
         .first();
 
@@ -898,6 +961,10 @@ app.get(
           ),
         },
         products,
+        filters: {
+          startAt: startAt || null,
+          endAt: endAt || null,
+        },
         generatedAt: new Date().toISOString(),
       });
     } catch (error) {
