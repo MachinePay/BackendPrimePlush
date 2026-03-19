@@ -958,16 +958,27 @@ app.get(
           ),
       );
 
+      // Mantém a mesma regra do histórico para evitar divergência de KPI:
+      // (paid/authorized) OU pagamento presencial.
       const ordersInRange = await applyOrderDateRange(
-        db("orders").select(
-          "id",
-          "items",
-          "total",
-          "timestamp",
-          "paymentMethod",
-          "paymentStatus",
-          "status",
-        ),
+        db("orders")
+          .where(function () {
+            this.whereIn("paymentStatus", ["paid", "authorized"]).orWhere(
+              function () {
+                this.where("paymentType", "presencial");
+              },
+            );
+          })
+          .select(
+            "id",
+            "items",
+            "total",
+            "timestamp",
+            "paymentMethod",
+            "paymentStatus",
+            "status",
+            "paymentType",
+          ),
       );
 
       const pendingPaidOrders = paidOrders.filter(
