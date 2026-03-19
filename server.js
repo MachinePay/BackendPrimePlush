@@ -818,6 +818,110 @@ app.get(
         return query;
       };
 
+      const successfulPaymentStatuses = ["paid", "authorized", "approved"];
+      const canceledPaymentStatuses = ["canceled", "cancelled", "rejected"];
+
+      const isSuccessfulOrder = (order) =>
+        successfulPaymentStatuses.includes(
+          String(order.paymentStatus || "").toLowerCase(),
+        );
+
+      const isCanceledOrder = (order) => {
+        const normalizedPaymentStatus = String(
+          order.paymentStatus || "",
+        ).toLowerCase();
+        const normalizedOrderStatus = String(order.status || "").toLowerCase();
+
+        return (
+          canceledPaymentStatuses.includes(normalizedPaymentStatus) ||
+          normalizedOrderStatus === "canceled"
+        );
+      };
+
+      const normalizePaymentMethod = (method) => {
+        const normalized = String(method || "")
+          .toLowerCase()
+          .trim();
+
+        if (!normalized) {
+          return { key: "outros", label: "Outros" };
+        }
+
+        if (normalized.includes("pix")) {
+          return { key: "pix", label: "Pix" };
+        }
+
+        const debitMethods = new Set([
+          "debit",
+          "debito",
+          "debit_card",
+          "debvisa",
+          "debmaster",
+          "maestro",
+        ]);
+
+        if (debitMethods.has(normalized) || normalized.includes("debit")) {
+          return { key: "debit", label: "Cartao de Debito" };
+        }
+
+        const creditMethods = new Set([
+          "credit",
+          "credito",
+          "credit_card",
+          "visa",
+          "master",
+          "mastercard",
+          "elo",
+          "amex",
+          "american_express",
+          "hipercard",
+          "diners",
+          "discover",
+          "jcb",
+          "cabal",
+          "tarshop",
+        ]);
+
+        if (creditMethods.has(normalized) || normalized.includes("credit")) {
+          return { key: "credit", label: "Cartao de Credito" };
+        }
+
+        return { key: "outros", label: "Outros" };
+      };
+
+      const padNumber = (value) => String(value).padStart(2, "0");
+      const formatDateKey = (date) =>
+        `${date.getFullYear()}-${padNumber(date.getMonth() + 1)}-${padNumber(
+          date.getDate(),
+        )}`;
+      const dailyLabelFormatter = new Intl.DateTimeFormat("pt-BR", {
+        day: "2-digit",
+        month: "2-digit",
+      });
+      const monthLabelFormatter = new Intl.DateTimeFormat("pt-BR", {
+        month: "short",
+        year: "2-digit",
+      });
+      const getWeekStart = (date) => {
+        const weekStart = new Date(date);
+        weekStart.setHours(0, 0, 0, 0);
+        const dayOfWeek = (weekStart.getDay() + 6) % 7;
+        weekStart.setDate(weekStart.getDate() - dayOfWeek);
+        return weekStart;
+      };
+      const pushRevenuePoint = (map, key, payload) => {
+        const current = map.get(key) || {
+          label: payload.label,
+          revenue: 0,
+          orders: 0,
+          sortKey: payload.sortKey,
+        };
+
+        current.revenue += payload.revenue;
+        current.orders += 1;
+        map.set(key, current);
+      };
+
       const receivablesRows = await db("super_admin_receivables").select(
         "order_ids",
       );
@@ -842,18 +946,32 @@ app.get(
 
       const paidOrders = await applyOrderDateRange(
         db("orders")
-          .whereIn("paymentStatus", ["paid", "authorized"])
-          .select("id", "items", "total", "timestamp"),
+          .whereIn("paymentStatus", successfulPaymentStatuses)
+          .select(
+            "id",
+            "items",
+            "total",
+            "timestamp",
+            "paymentMethod",
+            "paymentStatus",
+            "status",
+          ),
       );
 
-      const pendingPaidOrders = await applyOrderDateRange(
-        db("orders")
-          .whereIn("paymentStatus", ["paid", "authorized"])
-          .whereNotIn(
-            "id",
-            alreadyProcessedIds.length > 0 ? alreadyProcessedIds : [""],
-          )
-          .select("id", "items"),
+      const ordersInRange = await applyOrderDateRange(
+        db("orders").select(
+          "id",
+          "items",
+          "total",
+          "timestamp",
+          "paymentMethod",
+          "paymentStatus",
+          "status",
+        ),
+      );
+
+      const pendingPaidOrders = paidOrders.filter(
+        (order) => !alreadyProcessedIds.includes(String(order.id)),
       );
 
       const productRows = await db("products").select("id", "name", "priceRaw");
@@ -866,6 +984,10 @@ app.get(
       });
 
       const productSales = new Map();
+      const paymentDistributionMap = new Map();
+      const dailyRevenueMap = new Map();
+      const weeklyRevenueMap = new Map();
+      const monthlyRevenueMap = new Map();
       let totalRevenue = 0;
       let totalItemsSold = 0;
 
@@ -891,8 +1013,67 @@ app.get(
         return sum + calculateOrderValueToReceive(orderItems);
       }, 0);
 
+      const successfulOrdersCount =
+        ordersInRange.filter(isSuccessfulOrder).length;
+      const canceledOrdersCount = ordersInRange.filter(isCanceledOrder).length;
+      const pendingOrdersCount = Math.max(
+        0,
+        ordersInRange.length - successfulOrdersCount - canceledOrdersCount,
+      );
+
       paidOrders.forEach((order) => {
         totalRevenue += parseFloat(order.total) || 0;
+
+        const orderDate = new Date(order.timestamp);
+        const orderRevenue = parseFloat(order.total) || 0;
+        const paymentMethod = normalizePaymentMethod(order.paymentMethod);
+
+        const paymentDistribution = paymentDistributionMap.get(
+          paymentMethod.key,
+        ) || {
+          method: paymentMethod.key,
+          name: paymentMethod.label,
+          orders: 0,
+          revenue: 0,
+        };
+
+        paymentDistribution.orders += 1;
+        paymentDistribution.revenue += orderRevenue;
+        paymentDistributionMap.set(paymentMethod.key, paymentDistribution);
+
+        if (!Number.isNaN(orderDate.getTime())) {
+          const dailyKey = formatDateKey(orderDate);
+          pushRevenuePoint(dailyRevenueMap, dailyKey, {
+            label: dailyLabelFormatter.format(orderDate),
+            revenue: orderRevenue,
+            sortKey: new Date(`${dailyKey}T00:00:00`).getTime(),
+          });
+
+          const weekStart = getWeekStart(orderDate);
+          const weekEnd = new Date(weekStart);
+          weekEnd.setDate(weekEnd.getDate() + 6);
+          const weeklyKey = formatDateKey(weekStart);
+          pushRevenuePoint(weeklyRevenueMap, weeklyKey, {
+            label: `${dailyLabelFormatter.format(weekStart)} - ${dailyLabelFormatter.format(weekEnd)}`,
+            revenue: orderRevenue,
+            sortKey: weekStart.getTime(),
+          });
+
+          const monthStart = new Date(
+            orderDate.getFullYear(),
+            orderDate.getMonth(),
+            1,
+          );
+          const monthlyKey = `${monthStart.getFullYear()}-${padNumber(monthStart.getMonth() + 1)}`;
+          pushRevenuePoint(monthlyRevenueMap, monthlyKey, {
+            label: monthLabelFormatter
+              .format(orderDate)
+              .replace(".", "")
+              .replace(" de ", "/"),
+            revenue: orderRevenue,
+            sortKey: monthStart.getTime(),
+          });
+        }
 
         const parsedItems = parseJSON(order.items);
         const orderItems = Array.isArray(parsedItems) ? parsedItems : [];
@@ -937,6 +1118,18 @@ app.get(
 
       const totalPaidToGiraKids = parseFloat(totalPaidRow?.total) || 0;
       const pendingToPay = Math.max(0, totalToPayGiraKids);
+      const averageTicket = successfulOrdersCount
+        ? totalRevenue / successfulOrdersCount
+        : 0;
+      const successRate = ordersInRange.length
+        ? (successfulOrdersCount / ordersInRange.length) * 100
+        : 0;
+      const cancellationRate = ordersInRange.length
+        ? (canceledOrdersCount / ordersInRange.length) * 100
+        : 0;
+      const pendingRate = ordersInRange.length
+        ? (pendingOrdersCount / ordersInRange.length) * 100
+        : 0;
 
       const products = Array.from(productSales.values())
         .sort(
@@ -948,12 +1141,37 @@ app.get(
           giraKidsValue: Number(product.giraKidsValue.toFixed(2)),
         }));
 
+      const sortRevenueSeries = (seriesMap) =>
+        Array.from(seriesMap.values())
+          .sort((a, b) => a.sortKey - b.sortKey)
+          .map((item) => ({
+            label: item.label,
+            revenue: Number(item.revenue.toFixed(2)),
+            orders: item.orders,
+          }));
+
+      const paymentDistribution = Array.from(paymentDistributionMap.values())
+        .sort((a, b) => b.orders - a.orders || b.revenue - a.revenue)
+        .map((item) => ({
+          ...item,
+          value: item.orders,
+          revenue: Number(item.revenue.toFixed(2)),
+        }));
+
       return res.json({
         success: true,
         summary: {
-          totalOrders: paidOrders.length,
+          totalOrders: successfulOrdersCount,
+          totalOrderAttempts: ordersInRange.length,
+          successfulOrders: successfulOrdersCount,
+          canceledOrders: canceledOrdersCount,
+          pendingOrders: pendingOrdersCount,
           totalItemsSold,
           totalRevenue: Number(totalRevenue.toFixed(2)),
+          averageTicket: Number(averageTicket.toFixed(2)),
+          successRate: Number(successRate.toFixed(2)),
+          cancellationRate: Number(cancellationRate.toFixed(2)),
+          pendingRate: Number(pendingRate.toFixed(2)),
           totalToPayGiraKids: Number(pendingToPay.toFixed(2)),
           totalPaidToGiraKids: Number(totalPaidToGiraKids.toFixed(2)),
           totalGiraKidsAccrued: Number(
@@ -961,6 +1179,14 @@ app.get(
           ),
         },
         products,
+        charts: {
+          revenueEvolution: {
+            daily: sortRevenueSeries(dailyRevenueMap),
+            weekly: sortRevenueSeries(weeklyRevenueMap),
+            monthly: sortRevenueSeries(monthlyRevenueMap),
+          },
+          paymentDistribution,
+        },
         filters: {
           startAt: startAt || null,
           endAt: endAt || null,
