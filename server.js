@@ -392,6 +392,9 @@ async function initDatabase() {
       table.string("paymentId");
       table.json("items").notNullable();
       table.timestamp("completedAt");
+      table.boolean("hiddenFromHistory").defaultTo(false);
+      table.timestamp("hiddenAt");
+      table.string("hiddenBy");
     });
   }
 
@@ -405,6 +408,33 @@ async function initDatabase() {
       table.text("observation"); // Usando text para permitir observações mais longas
     });
     console.log("✅ Coluna 'observation' adicionada à tabela orders");
+  }
+
+  const hasHiddenFromHistoryColumn = await db.schema.hasColumn(
+    "orders",
+    "hiddenFromHistory",
+  );
+  if (!hasHiddenFromHistoryColumn) {
+    await db.schema.table("orders", (table) => {
+      table.boolean("hiddenFromHistory").defaultTo(false);
+    });
+    console.log("✅ Coluna 'hiddenFromHistory' adicionada à tabela orders");
+  }
+
+  const hasHiddenAtColumn = await db.schema.hasColumn("orders", "hiddenAt");
+  if (!hasHiddenAtColumn) {
+    await db.schema.table("orders", (table) => {
+      table.timestamp("hiddenAt");
+    });
+    console.log("✅ Coluna 'hiddenAt' adicionada à tabela orders");
+  }
+
+  const hasHiddenByColumn = await db.schema.hasColumn("orders", "hiddenBy");
+  if (!hasHiddenByColumn) {
+    await db.schema.table("orders", (table) => {
+      table.string("hiddenBy");
+    });
+    console.log("✅ Coluna 'hiddenBy' adicionada à tabela orders");
   }
 
   // ========== TABELA DE CATEGORIAS (Multi-tenancy) ==========
@@ -2428,6 +2458,49 @@ app.get("/api/user-orders", async (req, res) => {
   }
 });
 
+// Excluir pedido do histórico (soft delete) - apenas admin
+app.delete(
+  "/api/admin/orders/history/:id",
+  authenticateToken,
+  authorizeAdmin,
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      const order = await db("orders").where({ id }).first();
+
+      if (!order) {
+        return res.status(404).json({ error: "Pedido não encontrado" });
+      }
+
+      if (order.hiddenFromHistory) {
+        return res.json({
+          ok: true,
+          message: "Pedido já estava excluído do histórico",
+          orderId: id,
+        });
+      }
+
+      await db("orders").where({ id }).update({
+        hiddenFromHistory: true,
+        hiddenAt: new Date().toISOString(),
+        hiddenBy: req.user?.role || "admin",
+      });
+
+      return res.json({
+        ok: true,
+        message: "Pedido excluído do histórico com sucesso",
+        orderId: id,
+      });
+    } catch (e) {
+      console.error("❌ [DELETE /api/admin/orders/history/:id] Erro:", e);
+      return res.status(500).json({
+        error: "Erro ao excluir pedido do histórico",
+        message: e.message,
+      });
+    }
+  },
+);
+
 // Endpoint para histórico de pedidos com filtros de data
 app.get("/api/orders/history", async (req, res) => {
   try {
@@ -2442,6 +2515,9 @@ app.get("/api/orders/history", async (req, res) => {
             this.where("paymentType", "presencial");
           },
         );
+      })
+      .andWhere(function () {
+        this.where("hiddenFromHistory", false).orWhereNull("hiddenFromHistory");
       })
       .orderBy("timestamp", "desc");
     if (start) query = query.where("timestamp", ">=", start);
