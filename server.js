@@ -2458,7 +2458,7 @@ app.get("/api/user-orders", async (req, res) => {
   }
 });
 
-// Excluir pedido do histórico (soft delete) - apenas admin
+// Excluir pedido do histórico (hard delete) + estornar estoque - apenas admin
 app.delete(
   "/api/admin/orders/history/:id",
   authenticateToken,
@@ -2466,32 +2466,77 @@ app.delete(
   async (req, res) => {
     try {
       const { id } = req.params;
-      const order = await db("orders").where({ id }).first();
+      const restockedItems = [];
 
-      if (!order) {
-        return res.status(404).json({ error: "Pedido não encontrado" });
-      }
+      await db.transaction(async (trx) => {
+        const order = await trx("orders").where({ id }).first();
+        if (!order) {
+          const notFoundError = new Error("ORDER_NOT_FOUND");
+          notFoundError.code = "ORDER_NOT_FOUND";
+          throw notFoundError;
+        }
 
-      if (order.hiddenFromHistory) {
-        return res.json({
-          ok: true,
-          message: "Pedido já estava excluído do histórico",
-          orderId: id,
-        });
-      }
+        const normalizedPaymentStatus = String(
+          order.paymentStatus || "",
+        ).toLowerCase();
+        const shouldRestoreStock = ["paid", "authorized", "approved"].includes(
+          normalizedPaymentStatus,
+        );
 
-      await db("orders").where({ id }).update({
-        hiddenFromHistory: true,
-        hiddenAt: new Date().toISOString(),
-        hiddenBy: req.user?.role || "admin",
+        const items = parseJSON(order.items);
+
+        for (const item of Array.isArray(items) ? items : []) {
+          const productId = item?.id || item?.productId;
+          const quantity = Number(item?.quantity) || 0;
+
+          if (!productId || quantity <= 0) {
+            continue;
+          }
+
+          const product = await trx("products").where({ id: productId }).first();
+          if (!product || product.stock === null) {
+            continue;
+          }
+
+          const currentStock = Number(product.stock) || 0;
+          const currentReserved = Number(product.stock_reserved) || 0;
+
+          const nextStock = shouldRestoreStock
+            ? currentStock + quantity
+            : currentStock;
+          const nextReserved = Math.max(0, currentReserved - quantity);
+
+          await trx("products").where({ id: productId }).update({
+            stock: nextStock,
+            stock_reserved: nextReserved,
+          });
+
+          restockedItems.push({
+            productId,
+            name: item?.name || "Produto",
+            quantity,
+            stockBefore: currentStock,
+            stockAfter: nextStock,
+            reservedBefore: currentReserved,
+            reservedAfter: nextReserved,
+          });
+        }
+
+        await trx("order_products").where({ order_id: id }).del();
+        await trx("orders").where({ id }).del();
       });
 
       return res.json({
         ok: true,
-        message: "Pedido excluído do histórico com sucesso",
+        message: "Pedido excluído do banco e estoque estornado com sucesso",
         orderId: id,
+        restockedItems,
       });
     } catch (e) {
+      if (e.code === "ORDER_NOT_FOUND") {
+        return res.status(404).json({ error: "Pedido não encontrado" });
+      }
+
       console.error("❌ [DELETE /api/admin/orders/history/:id] Erro:", e);
       return res.status(500).json({
         error: "Erro ao excluir pedido do histórico",

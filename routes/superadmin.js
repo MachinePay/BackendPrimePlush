@@ -119,6 +119,9 @@ router.get("/super-admin/receivables", superAdminAuth, async (req, res) => {
     // B. Buscar pedidos pagos que ainda não foram processados
     const paidOrders = await db("orders")
       .whereIn("paymentStatus", ["paid", "authorized"])
+      .andWhere(function () {
+        this.where("hiddenFromHistory", false).orWhereNull("hiddenFromHistory");
+      })
       .whereNotIn(
         "id",
         alreadyProcessedIds.length > 0 ? alreadyProcessedIds : [""],
