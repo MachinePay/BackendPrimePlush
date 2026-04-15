@@ -848,8 +848,16 @@ app.get(
         return query;
       };
 
+      const receivablePaymentStatuses = ["paid", "authorized"];
       const successfulPaymentStatuses = ["paid", "authorized", "approved"];
       const canceledPaymentStatuses = ["canceled", "cancelled", "rejected"];
+
+      const applyVisibleHistoryFilter = (query) =>
+        query.andWhere(function () {
+          this.where("hiddenFromHistory", false).orWhereNull(
+            "hiddenFromHistory",
+          );
+        });
 
       const isSuccessfulOrder = (order) =>
         successfulPaymentStatuses.includes(
@@ -975,40 +983,44 @@ app.get(
       });
 
       const paidOrders = await applyOrderDateRange(
-        db("orders")
-          .whereIn("paymentStatus", successfulPaymentStatuses)
-          .select(
-            "id",
-            "items",
-            "total",
-            "timestamp",
-            "paymentMethod",
-            "paymentStatus",
-            "status",
-          ),
+        applyVisibleHistoryFilter(
+          db("orders")
+            .whereIn("paymentStatus", receivablePaymentStatuses)
+            .select(
+              "id",
+              "items",
+              "total",
+              "timestamp",
+              "paymentMethod",
+              "paymentStatus",
+              "status",
+            ),
+        ),
       );
 
       // Mantém a mesma regra do histórico para evitar divergência de KPI:
       // (paid/authorized) OU pagamento presencial.
       const ordersInRange = await applyOrderDateRange(
-        db("orders")
-          .where(function () {
-            this.whereIn("paymentStatus", ["paid", "authorized"]).orWhere(
-              function () {
-                this.where("paymentType", "presencial");
-              },
-            );
-          })
-          .select(
-            "id",
-            "items",
-            "total",
-            "timestamp",
-            "paymentMethod",
-            "paymentStatus",
-            "status",
-            "paymentType",
-          ),
+        applyVisibleHistoryFilter(
+          db("orders")
+            .where(function () {
+              this.whereIn("paymentStatus", ["paid", "authorized"]).orWhere(
+                function () {
+                  this.where("paymentType", "presencial");
+                },
+              );
+            })
+            .select(
+              "id",
+              "items",
+              "total",
+              "timestamp",
+              "paymentMethod",
+              "paymentStatus",
+              "status",
+              "paymentType",
+            ),
+        ),
       );
 
       const processedOrderIdsSet = new Set(alreadyProcessedIds);
@@ -2493,7 +2505,9 @@ app.delete(
             continue;
           }
 
-          const product = await trx("products").where({ id: productId }).first();
+          const product = await trx("products")
+            .where({ id: productId })
+            .first();
           if (!product || product.stock === null) {
             continue;
           }
