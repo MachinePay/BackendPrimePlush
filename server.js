@@ -36,6 +36,7 @@ app.use(
       "http://localhost:3000",
       "https://primeplush.vercel.app",
       "https://primeplush.com.br",
+      "https://prime.primeplush.com.br",
     ],
     credentials: true,
   }),
@@ -588,6 +589,7 @@ async function initDatabase() {
 const allowedOrigins = [
   "http://localhost:3000",
   "https://primeplush.com.br",
+  "https://prime.primeplush.com.br",
   process.env.FRONTEND_URL,
 ].filter(Boolean);
 
