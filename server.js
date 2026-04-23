@@ -1114,11 +1114,20 @@ app.get(
       });
 
       const productSales = new Map();
+      const analyticsProductSales = new Map();
       const categorySalesMap = new Map();
       const paymentDistributionMap = new Map();
       const dailyRevenueMap = new Map();
       const weeklyRevenueMap = new Map();
       const monthlyRevenueMap = new Map();
+
+      const normalizeAnalyticsText = (value) =>
+        String(value || "")
+          .normalize("NFD")
+          .replace(/[\u0300-\u036f]/g, "")
+          .toLowerCase()
+          .replace(/\s+/g, " ")
+          .trim();
       let totalRevenue = 0;
       let totalItemsSold = 0;
 
@@ -1273,6 +1282,24 @@ app.get(
 
           productSales.set(itemId, existing);
 
+          const analyticsKey = [
+            normalizeAnalyticsText(itemName),
+            normalizeAnalyticsText(itemCategory || "Outros"),
+          ].join("::");
+
+          const analyticsExisting = analyticsProductSales.get(analyticsKey) || {
+            productId: itemId,
+            name: itemName,
+            category: itemCategory,
+            quantitySold: 0,
+            revenue: 0,
+          };
+
+          analyticsExisting.quantitySold += quantity;
+          analyticsExisting.revenue += itemRevenue;
+
+          analyticsProductSales.set(analyticsKey, analyticsExisting);
+
           const categoryEntry = categorySalesMap.get(itemCategory) || {
             category: itemCategory,
             quantitySold: 0,
@@ -1321,20 +1348,31 @@ app.get(
           minStock: Number(product.minStock) || 0,
         }));
 
-      const topProductsByVolume = products.slice(0, 10).map((product) => ({
+      const analyticsProducts = Array.from(analyticsProductSales.values())
+        .sort(
+          (a, b) => b.quantitySold - a.quantitySold || b.revenue - a.revenue,
+        )
+        .map((product) => ({
+          ...product,
+          revenue: Number(product.revenue.toFixed(2)),
+        }));
+
+      const topProductsByVolume = analyticsProducts
+        .slice(0, 10)
+        .map((product) => ({
         productId: product.productId,
         name: product.name,
         category: product.category || "Outros",
         quantitySold: product.quantitySold,
         revenue: Number(product.revenue.toFixed(2)),
-      }));
+        }));
 
-      const totalRevenueForAbc = products.reduce(
+      const totalRevenueForAbc = analyticsProducts.reduce(
         (sum, product) => sum + product.revenue,
         0,
       );
       let cumulativeShare = 0;
-      const abcCurve = [...products]
+      const abcCurve = [...analyticsProducts]
         .sort((a, b) => b.revenue - a.revenue)
         .map((product, index) => {
           const revenueShare = totalRevenueForAbc
