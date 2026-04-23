@@ -123,6 +123,28 @@ const parseJSON = (data) => {
   return data || [];
 };
 
+// Helper para registrar movimentações de estoque no banco
+async function logStockMovement({
+  productId,
+  productName,
+  quantity,
+  type,
+  orderId = null,
+}) {
+  try {
+    await db("stock_movements").insert({
+      productId,
+      productName,
+      quantity, // negativo = saída, positivo = entrada
+      type,
+      orderId,
+      created_at: new Date(),
+    });
+  } catch (e) {
+    console.warn("⚠️ Erro ao registrar movimentação de estoque:", e.message);
+  }
+}
+
 const dbType = process.env.DATABASE_URL
   ? "PostgreSQL (Render)"
   : "SQLite (Local)";
@@ -448,6 +470,20 @@ async function initDatabase() {
       table.timestamp("created_at").defaultTo(db.fn.now());
     });
     console.log("✅ Tabela 'categories' criada com sucesso");
+  }
+
+  // ========== TABELA DE MOVIMENTAÇÕES DE ESTOQUE ==========
+  if (!(await db.schema.hasTable("stock_movements"))) {
+    await db.schema.createTable("stock_movements", (table) => {
+      table.increments("id").primary();
+      table.string("productId").notNullable();
+      table.string("productName").notNullable();
+      table.integer("quantity").notNullable(); // negativo = saída, positivo = entrada
+      table.string("type").notNullable(); // 'sale', 'manual', 'cancel', 'return'
+      table.string("orderId"); // nullable — só para movimentações de venda
+      table.timestamp("created_at").defaultTo(db.fn.now());
+    });
+    console.log("✅ Tabela 'stock_movements' criada com sucesso");
   }
 
   // Modo single-tenant: não cria tabela de lojas
@@ -787,6 +823,28 @@ const authorizeKitchen = (req, res, next) => {
 };
 
 // Relatório de gestão para admin (usa a mesma base de cálculo do superadmin)
+
+// Histórico de movimentações de estoque (backend)
+app.get(
+  "/api/admin/stock-movements",
+  authenticateToken,
+  authorizeAdmin,
+  async (req, res) => {
+    try {
+      const { start, end, productId } = req.query;
+      let query = db("stock_movements").orderBy("created_at", "desc");
+      if (start) query = query.where("created_at", ">=", start);
+      if (end) query = query.where("created_at", "<=", end);
+      if (productId) query = query.where({ productId });
+      const movements = await query.limit(500);
+      res.json(movements);
+    } catch (e) {
+      console.error("❌ Erro ao buscar movimentações de estoque:", e);
+      res.status(500).json({ error: "Erro ao buscar movimentações" });
+    }
+  },
+);
+
 app.get(
   "/api/admin/management-report",
   authenticateToken,
@@ -1647,6 +1705,20 @@ app.put(
       }
       await db("products").where({ id }).update(updates);
 
+      // Registra movimentação manual de estoque se o campo stock foi alterado
+      if (stock !== undefined && exists.stock !== null) {
+        const oldStock = Number(exists.stock) || 0;
+        const newStockVal = stock === null ? null : parseInt(stock);
+        if (newStockVal !== null && newStockVal !== oldStock) {
+          await logStockMovement({
+            productId: id,
+            productName: exists.name,
+            quantity: newStockVal - oldStock,
+            type: "manual",
+          });
+        }
+      }
+
       const updated = await db("products").where({ id }).first();
       res.json({
         ...updated,
@@ -2231,7 +2303,10 @@ app.put("/api/orders/:id/mark-paid", async (req, res) => {
     }
 
     // Só desconta estoque se ainda não foi descontado via mark-delivered
-    const alreadyDeducted = order.entregueCliente == 1;
+    const alreadyDeducted =
+      order.entregueCliente == 1 ||
+      order.paymentStatus === "paid" ||
+      order.paymentStatus === "authorized";
     if (!alreadyDeducted) {
       for (const item of items) {
         const product = await db("products").where({ id: item.id }).first();
@@ -2245,15 +2320,20 @@ app.put("/api/orders/:id/mark-paid", async (req, res) => {
             stock: newStock,
             stock_reserved: newReserved,
           });
+          await logStockMovement({
+            productId: item.id,
+            productName: item.name,
+            quantity: -item.quantity,
+            type: "sale",
+            orderId: id,
+          });
           console.log(
             `  ✅ [mark-paid] ${item.name}: ${product.stock} → ${newStock} (-${item.quantity})`,
           );
         }
       }
     } else {
-      console.log(
-        `⚠️ [mark-paid] Estoque já descontado via entrega. Pulando dedução.`,
-      );
+      console.log(`⚠️ [mark-paid] Estoque já descontado. Pulando dedução.`);
     }
 
     await db("orders").where({ id }).update({ paymentStatus: "paid" });
@@ -2360,6 +2440,14 @@ app.put("/api/orders/:id", async (req, res) => {
           await db("products").where({ id: item.id }).update({
             stock: newStock,
             stock_reserved: newReserved,
+          });
+
+          await logStockMovement({
+            productId: item.id,
+            productName: item.name,
+            quantity: -item.quantity,
+            type: "sale",
+            orderId: id,
           });
 
           console.log(
@@ -3050,55 +3138,80 @@ app.post("/api/webhooks/mercadopago", async (req, res) => {
             const order = await db("orders").where({ id: externalRef }).first();
 
             if (order) {
-              const items = parseJSON(order.items);
-              console.log(`  🛒 ${items.length} item(ns) no pedido`);
+              // ✅ IDEMPOTÊNCIA: só desconta se o pedido ainda não foi pago
+              if (
+                order.paymentStatus === "paid" ||
+                order.paymentStatus === "authorized"
+              ) {
+                console.log(
+                  `⚠️ [Webhook] Pedido ${externalRef} já processado (${order.paymentStatus}). Ignorando dedução duplicada.`,
+                );
+              } else {
+                const items = parseJSON(order.items);
+                console.log(`  🛒 ${items.length} item(ns) no pedido`);
 
-              // Desconta cada produto
-              for (const item of items) {
-                const product = await db("products")
-                  .where({ id: item.id })
-                  .first();
-
-                if (product && product.stock !== null) {
-                  const newStock = product.stock - item.quantity;
-
-                  await db("products")
+                // Desconta cada produto
+                for (const item of items) {
+                  const product = await db("products")
                     .where({ id: item.id })
-                    .update({ stock: Math.max(0, newStock) });
+                    .first();
 
-                  console.log(
-                    `  ✅ ${item.name}: ${product.stock} → ${Math.max(
+                  if (product && product.stock !== null) {
+                    const newStock = product.stock - item.quantity;
+                    const newReserved = Math.max(
                       0,
-                      newStock,
-                    )} (${item.quantity} vendido)`,
-                  );
-                } else if (product) {
-                  console.log(`  ℹ️ ${item.name}: estoque ilimitado`);
-                }
-              }
+                      (product.stock_reserved || 0) - item.quantity,
+                    );
 
-              // Atualiza o pedido para pago e ativo, salvando forma de pagamento
-              await db("orders")
-                .where({ id: externalRef })
-                .update({
-                  paymentStatus: "paid",
-                  status: "active",
-                  paymentType: "online",
-                  paymentMethod: payment.payment_method_id || "unknown",
-                });
-              // Envia PDF por email para o cliente, se houver email
-              if (order.email) {
-                try {
-                  await sendOrderPdfEmail({ order, email: order.email });
-                  console.log(`📧 PDF enviado para ${order.email}`);
-                } catch (e) {
-                  console.error("Erro ao enviar PDF do pedido:", e);
-                }
-              }
+                    await db("products")
+                      .where({ id: item.id })
+                      .update({
+                        stock: Math.max(0, newStock),
+                        stock_reserved: newReserved,
+                      });
 
-              console.log(
-                `🎉 Estoque atualizado com sucesso e pedido marcado como pago!`,
-              );
+                    await logStockMovement({
+                      productId: item.id,
+                      productName: item.name,
+                      quantity: -item.quantity,
+                      type: "sale",
+                      orderId: externalRef,
+                    });
+
+                    console.log(
+                      `  ✅ ${item.name}: ${product.stock} → ${Math.max(
+                        0,
+                        newStock,
+                      )} (${item.quantity} vendido)`,
+                    );
+                  } else if (product) {
+                    console.log(`  ℹ️ ${item.name}: estoque ilimitado`);
+                  }
+                }
+
+                // Atualiza o pedido para pago e ativo, salvando forma de pagamento
+                await db("orders")
+                  .where({ id: externalRef })
+                  .update({
+                    paymentStatus: "paid",
+                    status: "active",
+                    paymentType: "online",
+                    paymentMethod: payment.payment_method_id || "unknown",
+                  });
+                // Envia PDF por email para o cliente, se houver email
+                if (order.email) {
+                  try {
+                    await sendOrderPdfEmail({ order, email: order.email });
+                    console.log(`📧 PDF enviado para ${order.email}`);
+                  } catch (e) {
+                    console.error("Erro ao enviar PDF do pedido:", e);
+                  }
+                }
+
+                console.log(
+                  `🎉 Estoque atualizado com sucesso e pedido marcado como pago!`,
+                );
+              }
             } else {
               console.log(`⚠️ Pedido ${externalRef} não encontrado no banco`);
             }
