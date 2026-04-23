@@ -277,7 +277,51 @@ router.get("/super-admin/receivables", superAdminAuth, async (req, res) => {
 router.put("/orders/:id/mark-delivered", async (req, res) => {
   try {
     const { id } = req.params;
-    // Atualiza a coluna entregueCliente para true (1)
+
+    const order = await db("orders").where({ id }).first();
+    if (!order) {
+      return res
+        .status(404)
+        .json({ success: false, message: "Pedido não encontrado." });
+    }
+
+    // Só desconta estoque se ainda não foi descontado via pagamento
+    const alreadyPaid =
+      order.paymentStatus === "paid" || order.paymentStatus === "authorized";
+    if (!alreadyPaid) {
+      let items = [];
+      try {
+        items =
+          typeof order.items === "string"
+            ? JSON.parse(order.items)
+            : order.items;
+      } catch (err) {
+        console.error("[mark-delivered] Erro ao parsear itens:", err);
+      }
+
+      for (const item of items) {
+        const product = await db("products").where({ id: item.id }).first();
+        if (product && product.stock !== null) {
+          const newStock = Math.max(0, product.stock - item.quantity);
+          const newReserved = Math.max(
+            0,
+            (product.stock_reserved || 0) - item.quantity,
+          );
+          await db("products").where({ id: item.id }).update({
+            stock: newStock,
+            stock_reserved: newReserved,
+          });
+          console.log(
+            `  ✅ [mark-delivered] ${item.name}: ${product.stock} → ${newStock} (-${item.quantity})`,
+          );
+        }
+      }
+    } else {
+      console.log(
+        `⚠️ [mark-delivered] Estoque já descontado via pagamento. Pulando dedução.`,
+      );
+    }
+
     const updated = await db("orders")
       .where({ id })
       .update({ entregueCliente: 1 });

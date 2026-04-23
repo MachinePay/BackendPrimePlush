@@ -2230,23 +2230,30 @@ app.put("/api/orders/:id/mark-paid", async (req, res) => {
         .json({ error: "Erro ao processar itens do pedido" });
     }
 
-    // Decrement stock for each product in the order
-    for (const item of items) {
-      const product = await db("products").where({ id: item.id }).first();
-      if (product && product.stock !== null) {
-        const newStock = Math.max(0, product.stock - item.quantity);
-        const newReserved = Math.max(
-          0,
-          (product.stock_reserved || 0) - item.quantity,
-        );
-        await db("products").where({ id: item.id }).update({
-          stock: newStock,
-          stock_reserved: newReserved,
-        });
-        console.log(
-          `  ✅ [Manual] ${item.name}: ${product.stock} → ${newStock} (-${item.quantity}), reserva: ${product.stock_reserved} → ${newReserved}`,
-        );
+    // Só desconta estoque se ainda não foi descontado via mark-delivered
+    const alreadyDeducted = order.entregueCliente == 1;
+    if (!alreadyDeducted) {
+      for (const item of items) {
+        const product = await db("products").where({ id: item.id }).first();
+        if (product && product.stock !== null) {
+          const newStock = Math.max(0, product.stock - item.quantity);
+          const newReserved = Math.max(
+            0,
+            (product.stock_reserved || 0) - item.quantity,
+          );
+          await db("products").where({ id: item.id }).update({
+            stock: newStock,
+            stock_reserved: newReserved,
+          });
+          console.log(
+            `  ✅ [mark-paid] ${item.name}: ${product.stock} → ${newStock} (-${item.quantity})`,
+          );
+        }
       }
+    } else {
+      console.log(
+        `⚠️ [mark-paid] Estoque já descontado via entrega. Pulando dedução.`,
+      );
     }
 
     await db("orders").where({ id }).update({ paymentStatus: "paid" });
