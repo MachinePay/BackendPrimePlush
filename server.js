@@ -1191,7 +1191,7 @@ app.get(
         ordersInRange.length - successfulOrdersCount - canceledOrdersCount,
       );
 
-      paidOrders.forEach((order) => {
+      ordersInRange.forEach((order) => {
         totalRevenue += parseFloat(order.total) || 0;
 
         const orderDate = new Date(order.timestamp);
@@ -1360,11 +1360,11 @@ app.get(
       const topProductsByVolume = analyticsProducts
         .slice(0, 10)
         .map((product) => ({
-        productId: product.productId,
-        name: product.name,
-        category: product.category || "Outros",
-        quantitySold: product.quantitySold,
-        revenue: Number(product.revenue.toFixed(2)),
+          productId: product.productId,
+          name: product.name,
+          category: product.category || "Outros",
+          quantitySold: product.quantitySold,
+          revenue: Number(product.revenue.toFixed(2)),
         }));
 
       const totalRevenueForAbc = analyticsProducts.reduce(
