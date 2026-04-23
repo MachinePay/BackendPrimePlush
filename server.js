@@ -908,7 +908,7 @@ app.get(
         return query;
       };
 
-      const receivablePaymentStatuses = ["paid", "authorized"];
+      const receivablePaymentStatuses = ["paid", "authorized", "approved"];
       const successfulPaymentStatuses = ["paid", "authorized", "approved"];
       const canceledPaymentStatuses = ["canceled", "cancelled", "rejected"];
 
@@ -1059,12 +1059,12 @@ app.get(
       );
 
       // Mantém a mesma regra do histórico para evitar divergência de KPI:
-      // (paid/authorized) OU pagamento presencial.
+      // (paid/authorized/approved) OU pagamento presencial.
       const ordersInRange = await applyOrderDateRange(
         applyVisibleHistoryFilter(
           db("orders")
             .where(function () {
-              this.whereIn("paymentStatus", ["paid", "authorized"]).orWhere(
+              this.whereIn("paymentStatus", successfulPaymentStatuses).orWhere(
                 function () {
                   this.where("paymentType", "presencial");
                 },
