@@ -1182,32 +1182,6 @@ app.get(
         });
       });
 
-      const stockIncomingByProduct = productRows
-        .map((product) => {
-          const productId = String(product.id);
-          const totals = allTimeStockTotalsByProductId.get(productId) || {
-            totalIncoming: 0,
-            totalOutgoing: 0,
-          };
-
-          return {
-            productId,
-            name: product.name || "Produto",
-            category: product.category || "Outros",
-            quantityIncoming: totals.totalIncoming,
-            quantityOutgoing: totals.totalOutgoing,
-            stock:
-              product.stock === null || product.stock === undefined
-                ? null
-                : Number(product.stock),
-          };
-        })
-        .filter((product) => product.quantityIncoming > 0)
-        .sort(
-          (a, b) =>
-            b.quantityIncoming - a.quantityIncoming ||
-            a.name.localeCompare(b.name, "pt-BR"),
-        );
 
       const normalizeAnalyticsText = (value) =>
         String(value || "")
@@ -1436,6 +1410,45 @@ app.get(
           minStock: Number(product.minStock) || 0,
         }));
 
+      const quantitySoldByProductId = new Map(
+        products.map((product) => [
+          String(product.productId),
+          Number(product.quantitySold) || 0,
+        ]),
+      );
+
+      const stockIncomingByProduct = productRows
+        .map((product) => {
+          const productId = String(product.id);
+          const totals = allTimeStockTotalsByProductId.get(productId) || {
+            totalIncoming: 0,
+            totalOutgoing: 0,
+          };
+
+          return {
+            productId,
+            name: product.name || "Produto",
+            category: product.category || "Outros",
+            quantityIncoming: totals.totalIncoming,
+            quantityOutgoing: quantitySoldByProductId.get(productId) || 0,
+            movementOutgoing: totals.totalOutgoing,
+            stock:
+              product.stock === null || product.stock === undefined
+                ? null
+                : Number(product.stock),
+          };
+        })
+        .filter(
+          (product) =>
+            product.quantityIncoming > 0 || product.quantityOutgoing > 0,
+        )
+        .sort(
+          (a, b) =>
+            b.quantityIncoming - a.quantityIncoming ||
+            b.quantityOutgoing - a.quantityOutgoing ||
+            a.name.localeCompare(b.name, "pt-BR"),
+        );
+
       const analyticsProducts = Array.from(analyticsProductSales.values())
         .sort(
           (a, b) => b.quantitySold - a.quantitySold || b.revenue - a.revenue,
@@ -1486,9 +1499,7 @@ app.get(
             totalIncoming:
               allTimeStockTotalsByProductId.get(product.productId)
                 ?.totalIncoming || 0,
-            totalOutgoing:
-              allTimeStockTotalsByProductId.get(product.productId)
-                ?.totalOutgoing || 0,
+            totalOutgoing: product.quantitySold,
             revenue: Number(product.revenue.toFixed(2)),
             revenueShare: Number(revenueShare.toFixed(2)),
             cumulativeShare: Number(normalizedCumulative.toFixed(2)),
