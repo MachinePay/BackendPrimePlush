@@ -2241,15 +2241,53 @@ app.post("/api/orders", async (req, res) => {
       }
 
       // 2. Checagem de estoque
-      for (const item of items) {
+      const requestedItems = new Map();
+      for (const item of Array.isArray(items) ? items : []) {
+        const quantity = Number(item.quantity) || 1;
+        if (!item.id || quantity <= 0) continue;
+
+        const current = requestedItems.get(item.id) || {
+          id: item.id,
+          name: item.name,
+          quantity: 0,
+        };
+        current.quantity += quantity;
+        requestedItems.set(item.id, current);
+      }
+
+      if (requestedItems.size === 0) {
+        throw new Error("Pedido sem itens validos");
+      }
+
+      for (const item of requestedItems.values()) {
         const product = await trx("products").where({ id: item.id }).first();
         if (!product) {
-          throw new Error(`Produto ${item.id} não encontrado no estoque!`);
+          throw new Error(`Produto ${item.id} nao encontrado no estoque!`);
         }
-        if (product.stock !== null && product.stock < item.quantity) {
-          throw new Error(
-            `Estoque insuficiente para ${item.name}. Disponível: ${product.stock}, Solicitado: ${item.quantity}`,
-          );
+
+        if (product.stock !== null) {
+          const currentStock = Number(product.stock) || 0;
+          const currentReserved = Number(product.stock_reserved) || 0;
+          const availableStock = Math.max(0, currentStock - currentReserved);
+
+          if (availableStock < item.quantity) {
+            throw new Error(
+              `Estoque insuficiente para ${item.name}. Disponivel: ${availableStock}, Solicitado: ${item.quantity}`,
+            );
+          }
+
+          const reserved = await trx("products")
+            .where({ id: item.id })
+            .whereRaw("(stock - COALESCE(stock_reserved, 0)) >= ?", [
+              item.quantity,
+            ])
+            .increment("stock_reserved", item.quantity);
+
+          if (!reserved) {
+            throw new Error(
+              `Estoque insuficiente para ${item.name}. Disponivel: ${availableStock}, Solicitado: ${item.quantity}`,
+            );
+          }
         }
       }
 
