@@ -1429,8 +1429,9 @@ app.get(
             productId,
             name: product.name || "Produto",
             category: product.category || "Outros",
-            quantityIncoming: totals.totalIncoming,
+            quantityIncoming: incomingStockByProductId.get(productId) || 0,
             quantityOutgoing: quantitySoldByProductId.get(productId) || 0,
+            totalIncoming: totals.totalIncoming,
             movementOutgoing: totals.totalOutgoing,
             stock:
               product.stock === null || product.stock === undefined
