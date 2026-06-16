@@ -1182,6 +1182,33 @@ app.get(
         });
       });
 
+      const stockIncomingByProduct = productRows
+        .map((product) => {
+          const productId = String(product.id);
+          const totals = allTimeStockTotalsByProductId.get(productId) || {
+            totalIncoming: 0,
+            totalOutgoing: 0,
+          };
+
+          return {
+            productId,
+            name: product.name || "Produto",
+            category: product.category || "Outros",
+            quantityIncoming: totals.totalIncoming,
+            quantityOutgoing: totals.totalOutgoing,
+            stock:
+              product.stock === null || product.stock === undefined
+                ? null
+                : Number(product.stock),
+          };
+        })
+        .filter((product) => product.quantityIncoming > 0)
+        .sort(
+          (a, b) =>
+            b.quantityIncoming - a.quantityIncoming ||
+            a.name.localeCompare(b.name, "pt-BR"),
+        );
+
       const normalizeAnalyticsText = (value) =>
         String(value || "")
           .normalize("NFD")
@@ -1631,6 +1658,7 @@ app.get(
           topProductsByVolume,
           abcCurve,
           categoryPerformance,
+          stockIncomingByProduct,
           stockAlerts,
         },
         filters: {
