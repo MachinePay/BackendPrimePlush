@@ -1135,11 +1135,52 @@ app.get(
 
       const productSales = new Map();
       const analyticsProductSales = new Map();
+      const incomingStockByProductId = new Map();
+      const allTimeStockTotalsByProductId = new Map();
       const categorySalesMap = new Map();
       const paymentDistributionMap = new Map();
       const dailyRevenueMap = new Map();
       const weeklyRevenueMap = new Map();
       const monthlyRevenueMap = new Map();
+
+      let incomingStockQuery = db("stock_movements")
+        .select("productId")
+        .sum("quantity as totalIncoming")
+        .where("quantity", ">", 0)
+        .groupBy("productId");
+      if (startAt) {
+        incomingStockQuery = incomingStockQuery.where("created_at", ">=", startAt);
+      }
+      if (endAt) {
+        incomingStockQuery = incomingStockQuery.where("created_at", "<=", endAt);
+      }
+
+      const incomingStockRows = await incomingStockQuery;
+      incomingStockRows.forEach((row) => {
+        incomingStockByProductId.set(
+          String(row.productId),
+          Number(row.totalIncoming) || 0,
+        );
+      });
+
+      const allTimeStockRows = await db("stock_movements")
+        .select("productId")
+        .sum({
+          totalIncoming: db.raw(
+            "CASE WHEN quantity > 0 THEN quantity ELSE 0 END",
+          ),
+          totalOutgoing: db.raw(
+            "CASE WHEN quantity < 0 THEN ABS(quantity) ELSE 0 END",
+          ),
+        })
+        .groupBy("productId");
+
+      allTimeStockRows.forEach((row) => {
+        allTimeStockTotalsByProductId.set(String(row.productId), {
+          totalIncoming: Number(row.totalIncoming) || 0,
+          totalOutgoing: Number(row.totalOutgoing) || 0,
+        });
+      });
 
       const normalizeAnalyticsText = (value) =>
         String(value || "")
@@ -1414,6 +1455,13 @@ app.get(
             name: product.name,
             category: product.category || "Outros",
             quantitySold: product.quantitySold,
+            quantityIncoming: incomingStockByProductId.get(product.productId) || 0,
+            totalIncoming:
+              allTimeStockTotalsByProductId.get(product.productId)
+                ?.totalIncoming || 0,
+            totalOutgoing:
+              allTimeStockTotalsByProductId.get(product.productId)
+                ?.totalOutgoing || 0,
             revenue: Number(product.revenue.toFixed(2)),
             revenueShare: Number(revenueShare.toFixed(2)),
             cumulativeShare: Number(normalizedCumulative.toFixed(2)),
