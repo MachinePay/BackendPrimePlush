@@ -130,6 +130,8 @@ async function logStockMovement({
   quantity,
   type,
   orderId = null,
+  stockBefore = null,
+  stockAfter = null,
 }) {
   try {
     await db("stock_movements").insert({
@@ -138,6 +140,8 @@ async function logStockMovement({
       quantity, // negativo = saída, positivo = entrada
       type,
       orderId,
+      stock_before: stockBefore,
+      stock_after: stockAfter,
       created_at: new Date(),
     });
   } catch (e) {
@@ -481,9 +485,25 @@ async function initDatabase() {
       table.integer("quantity").notNullable(); // negativo = saída, positivo = entrada
       table.string("type").notNullable(); // 'sale', 'manual', 'cancel', 'return'
       table.string("orderId"); // nullable — só para movimentações de venda
+      table.integer("stock_before");
+      table.integer("stock_after");
       table.timestamp("created_at").defaultTo(db.fn.now());
     });
     console.log("✅ Tabela 'stock_movements' criada com sucesso");
+  }
+
+  if (!(await db.schema.hasColumn("stock_movements", "stock_before"))) {
+    await db.schema.table("stock_movements", (table) => {
+      table.integer("stock_before");
+    });
+    console.log("Coluna stock_before adicionada em stock_movements");
+  }
+
+  if (!(await db.schema.hasColumn("stock_movements", "stock_after"))) {
+    await db.schema.table("stock_movements", (table) => {
+      table.integer("stock_after");
+    });
+    console.log("Coluna stock_after adicionada em stock_movements");
   }
 
   // Modo single-tenant: não cria tabela de lojas
@@ -1753,6 +1773,8 @@ app.put(
             productName: exists.name,
             quantity: newStockVal - oldStock,
             type: "manual",
+            stockBefore: oldStock,
+            stockAfter: newStockVal,
           });
         }
       }
@@ -2402,6 +2424,8 @@ app.put("/api/orders/:id/mark-paid", async (req, res) => {
             quantity: -item.quantity,
             type: "sale",
             orderId: id,
+            stockBefore: Number(product.stock) || 0,
+            stockAfter: newStock,
           });
           console.log(
             `  ✅ [mark-paid] ${item.name}: ${product.stock} → ${newStock} (-${item.quantity})`,
@@ -2524,6 +2548,8 @@ app.put("/api/orders/:id", async (req, res) => {
             quantity: -item.quantity,
             type: "sale",
             orderId: id,
+            stockBefore: Number(product.stock) || 0,
+            stockAfter: newStock,
           });
 
           console.log(
@@ -2697,6 +2723,19 @@ app.delete(
             stock: nextStock,
             stock_reserved: nextReserved,
           });
+
+          if (shouldRestoreStock && nextStock !== currentStock) {
+            await trx("stock_movements").insert({
+              productId,
+              productName: item?.name || "Produto",
+              quantity,
+              type: "return",
+              orderId: id,
+              stock_before: currentStock,
+              stock_after: nextStock,
+              created_at: new Date(),
+            });
+          }
 
           restockedItems.push({
             productId,
@@ -3252,6 +3291,8 @@ app.post("/api/webhooks/mercadopago", async (req, res) => {
                       quantity: -item.quantity,
                       type: "sale",
                       orderId: externalRef,
+                      stockBefore: Number(product.stock) || 0,
+                      stockAfter: Math.max(0, newStock),
                     });
 
                     console.log(
