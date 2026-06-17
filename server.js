@@ -865,6 +865,51 @@ app.get(
   },
 );
 
+app.post(
+  "/api/admin/release-reserved-stock",
+  authenticateToken,
+  authorizeAdmin,
+  async (req, res) => {
+    try {
+      const reservedProducts = await db("products")
+        .select("id", "name", "stock", "stock_reserved")
+        .where("stock_reserved", ">", 0);
+
+      const releasedUnits = reservedProducts.reduce(
+        (sum, product) => sum + (Number(product.stock_reserved) || 0),
+        0,
+      );
+
+      if (reservedProducts.length > 0) {
+        await db("products")
+          .where("stock_reserved", ">", 0)
+          .update({ stock_reserved: 0 });
+      }
+
+      console.log(
+        `🔓 [ADMIN] Estoque reservado liberado: ${releasedUnits} unidade(s) em ${reservedProducts.length} produto(s)`,
+      );
+
+      res.json({
+        success: true,
+        message: "Estoque reservado liberado com sucesso.",
+        affectedProducts: reservedProducts.length,
+        releasedUnits,
+        products: reservedProducts.map((product) => ({
+          id: product.id,
+          name: product.name,
+          stock: product.stock,
+          reservedBefore: Number(product.stock_reserved) || 0,
+          reservedAfter: 0,
+        })),
+      });
+    } catch (e) {
+      console.error("❌ Erro ao liberar estoque reservado:", e);
+      res.status(500).json({ error: "Erro ao liberar estoque reservado" });
+    }
+  },
+);
+
 app.get(
   "/api/admin/management-report",
   authenticateToken,
