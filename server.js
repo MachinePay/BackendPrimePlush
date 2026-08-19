@@ -4541,6 +4541,21 @@ app.post(
         return res.status(400).json({ error: "orderIds obrigatório (array)" });
       }
 
+      // Evita reprocessar pedidos já repassados (duplo clique, retry, etc.),
+      // o que duplicava o valor somado em "Já pago para GiraKids".
+      const alreadyReceivedIds = await db("orders")
+        .whereIn("id", orderIds)
+        .andWhere("repassadoSuperAdmin", 1)
+        .pluck("id");
+      const alreadyReceivedSet = new Set(alreadyReceivedIds.map(String));
+      orderIds = orderIds.filter((id) => !alreadyReceivedSet.has(String(id)));
+
+      if (orderIds.length === 0) {
+        return res.status(409).json({
+          error: "Estes pedidos já foram repassados anteriormente.",
+        });
+      }
+
       const now = new Date().toISOString();
       const updateResult = await db("orders").whereIn("id", orderIds).update({
         repassadoSuperAdmin: 1,
