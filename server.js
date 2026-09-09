@@ -476,6 +476,50 @@ async function initDatabase() {
     console.log("✅ Tabela 'categories' criada com sucesso");
   }
 
+  // ========== TABELA DE BANNERS DA HOME ==========
+  // Guarda os banners promocionais exibidos no topo do catálogo. A imagem é
+  // uma URL (mesmo modelo usado pelos produtos), então o admin pode apontar
+  // para um arquivo do /public do site ou para uma imagem hospedada fora.
+  if (!(await db.schema.hasTable("banners"))) {
+    await db.schema.createTable("banners", (table) => {
+      table.string("id").primary();
+      table.text("image").notNullable(); // URL da arte do banner
+      table.string("alt").defaultTo(""); // Texto alternativo (acessibilidade)
+      table.string("buttonLabel").defaultTo("Ver coleção"); // Rótulo do botão
+      table.string("category"); // Categoria cadastrada para onde o botão leva
+      table.string("query"); // Fallback: busca por texto
+      table.integer("order").defaultTo(0); // Ordem no carrossel
+      table.boolean("active").defaultTo(true);
+      table.timestamp("created_at").defaultTo(db.fn.now());
+    });
+    console.log("✅ Tabela 'banners' criada com sucesso");
+
+    // Semeia os banners que antes eram fixos no frontend, para que a home
+    // continue igual até o admin editar/trocar as artes. Só roda na criação
+    // da tabela — apagar todos os banners não os faz voltar no restart.
+    const defaultBanners = [
+      { image: "/1.jpg", alt: "Fofo, macio e feito para encantar", buttonLabel: "Ver catálogo" },
+      { image: "/2.jpg", alt: "Coleção Pokémon GG", buttonLabel: "Ver coleção", category: "Pokémon" },
+      { image: "/3.jpg", alt: "Coleção Stitch GG", buttonLabel: "Ver coleção", category: "Stich" },
+      { image: "/4.jpg", alt: "Coleção Capitão América", buttonLabel: "Ver coleção", query: "Capitão América" },
+      { image: "/5.jpg", alt: "Pelúcias Premium", buttonLabel: "Ver coleção", category: "Pelúcias Prime" },
+      { image: "/6.jpg", alt: "Coleção Charming", buttonLabel: "Ver coleção", query: "Charming" },
+    ];
+    await db("banners").insert(
+      defaultBanners.map((banner, index) => ({
+        id: `banner_seed_${index + 1}`,
+        image: banner.image,
+        alt: banner.alt,
+        buttonLabel: banner.buttonLabel,
+        category: banner.category || null,
+        query: banner.query || null,
+        order: index,
+        active: true,
+      })),
+    );
+    console.log("✅ Banners padrão inseridos na tabela 'banners'");
+  }
+
   // ========== TABELA DE MOVIMENTAÇÕES DE ESTOQUE ==========
   if (!(await db.schema.hasTable("stock_movements"))) {
     await db.schema.createTable("stock_movements", (table) => {
@@ -2070,6 +2114,202 @@ app.delete(
     } catch (e) {
       console.error("❌ Erro ao deletar categoria:", e);
       res.status(500).json({ error: "Erro ao deletar categoria" });
+    }
+  },
+);
+
+// ========== CRUD DE BANNERS DA HOME ==========
+
+const BANNER_COLUMNS = [
+  "id",
+  "image",
+  "alt",
+  "buttonLabel",
+  "category",
+  "query",
+  "order",
+  "active",
+  "created_at",
+];
+
+// Normaliza o registro do banco para o formato consumido pelo frontend.
+// O sqlite guarda boolean como 0/1, então `active` é convertido aqui.
+const serializeBanner = (banner) => ({
+  ...banner,
+  active: Boolean(banner.active),
+});
+
+// Listar banners ativos (público — usado pelo carrossel da home)
+app.get("/api/banners", async (req, res) => {
+  try {
+    const banners = await db("banners")
+      .select(BANNER_COLUMNS)
+      .where({ active: true })
+      .orderBy("order", "asc")
+      .orderBy("created_at", "asc");
+    res.json(banners.map(serializeBanner));
+  } catch (e) {
+    console.error("❌ Erro ao buscar banners:", e);
+    res.status(500).json({ error: "Erro ao buscar banners" });
+  }
+});
+
+// Listar todos os banners, inclusive os desativados (admin)
+app.get(
+  "/api/admin/banners",
+  authenticateToken,
+  authorizeAdmin,
+  async (req, res) => {
+    try {
+      const banners = await db("banners")
+        .select(BANNER_COLUMNS)
+        .orderBy("order", "asc")
+        .orderBy("created_at", "asc");
+      res.json(banners.map(serializeBanner));
+    } catch (e) {
+      console.error("❌ Erro ao buscar banners (admin):", e);
+      res.status(500).json({ error: "Erro ao buscar banners" });
+    }
+  },
+);
+
+// Criar banner
+app.post(
+  "/api/banners",
+  authenticateToken,
+  authorizeAdmin,
+  async (req, res) => {
+    const { image, alt, buttonLabel, category, query, order, active } =
+      req.body;
+    if (!image || !String(image).trim()) {
+      return res.status(400).json({ error: "A imagem do banner é obrigatória" });
+    }
+    try {
+      // Sem ordem informada, o banner entra no fim do carrossel.
+      let bannerOrder = Number(order);
+      if (!Number.isFinite(bannerOrder)) {
+        const last = await db("banners").max("order as maxOrder").first();
+        bannerOrder = Number(last?.maxOrder ?? -1) + 1;
+      }
+      const newBanner = {
+        id: `banner_${Date.now()}`,
+        image: String(image).trim(),
+        alt: (alt || "").trim(),
+        buttonLabel: (buttonLabel || "").trim() || "Ver coleção",
+        category: category ? String(category).trim() : null,
+        query: query ? String(query).trim() : null,
+        order: bannerOrder,
+        active: active === undefined ? true : Boolean(active),
+      };
+      await db("banners").insert(newBanner);
+      res.status(201).json(serializeBanner(newBanner));
+    } catch (e) {
+      console.error("❌ Erro ao criar banner:", e);
+      res.status(500).json({ error: "Erro ao criar banner" });
+    }
+  },
+);
+
+// Atualizar banner
+app.put(
+  "/api/banners/:id",
+  authenticateToken,
+  authorizeAdmin,
+  async (req, res) => {
+    const { id } = req.params;
+    const { image, alt, buttonLabel, category, query, order, active } =
+      req.body;
+    try {
+      const exists = await db("banners").where({ id }).first();
+      if (!exists) {
+        return res.status(404).json({ error: "Banner não encontrado" });
+      }
+      const updates = {};
+      if (image !== undefined) {
+        if (!String(image).trim()) {
+          return res
+            .status(400)
+            .json({ error: "A imagem do banner é obrigatória" });
+        }
+        updates.image = String(image).trim();
+      }
+      if (alt !== undefined) updates.alt = String(alt).trim();
+      if (buttonLabel !== undefined) {
+        updates.buttonLabel = String(buttonLabel).trim() || "Ver coleção";
+      }
+      // category/query aceitam string vazia como "limpar o vínculo"
+      if (category !== undefined) {
+        updates.category = String(category).trim() || null;
+      }
+      if (query !== undefined) {
+        updates.query = String(query).trim() || null;
+      }
+      if (order !== undefined && Number.isFinite(Number(order))) {
+        updates.order = Number(order);
+      }
+      if (active !== undefined) updates.active = Boolean(active);
+
+      if (Object.keys(updates).length === 0) {
+        return res.status(400).json({ error: "Nenhum campo para atualizar" });
+      }
+      await db("banners").where({ id }).update(updates);
+      const updated = await db("banners")
+        .select(BANNER_COLUMNS)
+        .where({ id })
+        .first();
+      res.json(serializeBanner(updated));
+    } catch (e) {
+      console.error("❌ Erro ao atualizar banner:", e);
+      res.status(500).json({ error: "Erro ao atualizar banner" });
+    }
+  },
+);
+
+// Deletar banner
+app.delete(
+  "/api/banners/:id",
+  authenticateToken,
+  authorizeAdmin,
+  async (req, res) => {
+    const { id } = req.params;
+    try {
+      const exists = await db("banners").where({ id }).first();
+      if (!exists) {
+        return res.status(404).json({ error: "Banner não encontrado" });
+      }
+      await db("banners").where({ id }).del();
+      res.json({ success: true, message: "Banner deletado com sucesso" });
+    } catch (e) {
+      console.error("❌ Erro ao deletar banner:", e);
+      res.status(500).json({ error: "Erro ao deletar banner" });
+    }
+  },
+);
+
+// Reordenar banners em lote (recebe a lista de ids na ordem desejada)
+app.put(
+  "/api/banners/reorder/all",
+  authenticateToken,
+  authorizeAdmin,
+  async (req, res) => {
+    const { ids } = req.body;
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ error: "Lista de ids é obrigatória" });
+    }
+    try {
+      await db.transaction(async (trx) => {
+        for (let index = 0; index < ids.length; index += 1) {
+          await trx("banners").where({ id: ids[index] }).update({ order: index });
+        }
+      });
+      const banners = await db("banners")
+        .select(BANNER_COLUMNS)
+        .orderBy("order", "asc")
+        .orderBy("created_at", "asc");
+      res.json(banners.map(serializeBanner));
+    } catch (e) {
+      console.error("❌ Erro ao reordenar banners:", e);
+      res.status(500).json({ error: "Erro ao reordenar banners" });
     }
   },
 );
