@@ -302,7 +302,9 @@ router.put("/orders/:id/mark-delivered", async (req, res) => {
       for (const item of items) {
         const product = await db("products").where({ id: item.id }).first();
         if (product && product.stock !== null) {
-          const newStock = Math.max(0, product.stock - item.quantity);
+          // Sem floor em 0: pedido liberado via PIN de balcão pode ficar
+          // negativo de propósito.
+          const newStock = product.stock - item.quantity;
           const newReserved = Math.max(
             0,
             (product.stock_reserved || 0) - item.quantity,

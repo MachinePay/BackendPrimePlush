@@ -74,6 +74,27 @@ const KITCHEN_PASSWORD = process.env.KITCHEN_PASSWORD;
 const SUPER_ADMIN_PASSWORD = process.env.SUPER_ADMIN_PASSWORD;
 const JWT_SECRET = process.env.JWT_SECRET;
 const REDIS_URL = process.env.REDIS_URL;
+const STOCK_OVERRIDE_PIN = process.env.STOCK_OVERRIDE_PIN || "6420";
+
+// Permite pedir um produto mesmo sem estoque (uso interno/balcão). O PIN
+// nunca é validado no frontend: aqui o backend confere o PIN e emite um
+// token JWT de curta duração que autoriza aquele pedido a deixar o estoque
+// negativo. Sem token válido, a checagem normal de estoque continua valendo.
+function signStockOverrideToken() {
+  return jwt.sign({ type: "stock_override" }, JWT_SECRET, {
+    expiresIn: "30m",
+  });
+}
+
+function isValidStockOverrideToken(token) {
+  if (!token || !JWT_SECRET) return false;
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    return decoded && decoded.type === "stock_override";
+  } catch {
+    return false;
+  }
+}
 
 // Inicializa SDK do Mercado Pago
 let mercadopago = null;
@@ -791,6 +812,27 @@ app.post("/api/auth/login", (req, res) => {
     console.log(`❌ Tentativa de login falhou para a role: ${role}`);
     res.status(401).json({ success: false, message: "Senha inválida" });
   }
+});
+
+// Verifica o PIN de liberação de pedido sem estoque (uso interno/balcão).
+// Retorna um token curto que autoriza APENAS o item enviado no pedido a
+// deixar o estoque negativo; o PIN em si nunca sai do backend.
+app.post("/api/stock-override/verify", (req, res) => {
+  const { pin } = req.body;
+
+  if (!JWT_SECRET) {
+    console.error("🚨 JWT_SECRET não está configurado!");
+    return res
+      .status(500)
+      .json({ success: false, message: "Erro de configuração no servidor." });
+  }
+
+  if (!pin || String(pin) !== STOCK_OVERRIDE_PIN) {
+    return res.status(401).json({ success: false, message: "PIN inválido" });
+  }
+
+  const token = signStockOverrideToken();
+  res.json({ success: true, token });
 });
 
 // MODO SINGLE-TENANT
@@ -2645,6 +2687,11 @@ app.post("/api/orders", async (req, res) => {
           id: item.id,
           name: item.name,
           quantity: 0,
+          // PIN de balcão (6420) já verificado no /api/stock-override/verify;
+          // aqui só confirmamos a assinatura do token, não o PIN de novo.
+          forceOverride:
+            Boolean(item.forceOverride) &&
+            isValidStockOverrideToken(item.overrideToken),
         };
         current.quantity += quantity;
         requestedItems.set(item.id, current);
@@ -2665,10 +2712,28 @@ app.post("/api/orders", async (req, res) => {
           const currentReserved = Number(product.stock_reserved) || 0;
           const availableStock = Math.max(0, currentStock - currentReserved);
 
-          if (availableStock < item.quantity) {
+          if (availableStock < item.quantity && !item.forceOverride) {
             throw new Error(
               `Estoque insuficiente para ${item.name}. Disponivel: ${availableStock}, Solicitado: ${item.quantity}`,
             );
+          }
+
+          if (item.forceOverride && availableStock < item.quantity) {
+            // Liberado via PIN: reserva mesmo sem saldo, o estoque poderá
+            // ficar negativo quando a venda for confirmada.
+            await trx("products")
+              .where({ id: item.id })
+              .increment("stock_reserved", item.quantity);
+            await logStockMovement({
+              productId: item.id,
+              productName: item.name,
+              quantity: item.quantity,
+              type: "override_reserve",
+              orderId: null,
+              stockBefore: currentStock,
+              stockAfter: currentStock,
+            });
+            continue;
           }
 
           const reserved = await trx("products")
@@ -2782,7 +2847,9 @@ app.put("/api/orders/:id/mark-paid", async (req, res) => {
       for (const item of items) {
         const product = await db("products").where({ id: item.id }).first();
         if (product && product.stock !== null) {
-          const newStock = Math.max(0, product.stock - item.quantity);
+          // Sem floor em 0: um pedido liberado via PIN de balcão pode
+          // deixar o estoque negativo de propósito.
+          const newStock = product.stock - item.quantity;
           const newReserved = Math.max(
             0,
             (product.stock_reserved || 0) - item.quantity,
@@ -2903,8 +2970,9 @@ app.put("/api/orders/:id", async (req, res) => {
         const product = await db("products").where({ id: item.id }).first();
 
         if (product && product.stock !== null) {
-          // Deduz do estoque real e libera da reserva
-          const newStock = Math.max(0, product.stock - item.quantity);
+          // Deduz do estoque real e libera da reserva. Sem floor em 0:
+          // pedido liberado via PIN de balcão pode ficar negativo.
+          const newStock = product.stock - item.quantity;
           const newReserved = Math.max(
             0,
             (product.stock_reserved || 0) - item.quantity,
@@ -3654,7 +3722,7 @@ app.post("/api/webhooks/mercadopago", async (req, res) => {
                     await db("products")
                       .where({ id: item.id })
                       .update({
-                        stock: Math.max(0, newStock),
+                        stock: newStock,
                         stock_reserved: newReserved,
                       });
 
@@ -3665,14 +3733,11 @@ app.post("/api/webhooks/mercadopago", async (req, res) => {
                       type: "sale",
                       orderId: externalRef,
                       stockBefore: Number(product.stock) || 0,
-                      stockAfter: Math.max(0, newStock),
+                      stockAfter: newStock,
                     });
 
                     console.log(
-                      `  ✅ ${item.name}: ${product.stock} → ${Math.max(
-                        0,
-                        newStock,
-                      )} (${item.quantity} vendido)`,
+                      `  ✅ ${item.name}: ${product.stock} → ${newStock} (${item.quantity} vendido)`,
                     );
                   } else if (product) {
                     console.log(`  ℹ️ ${item.name}: estoque ilimitado`);
