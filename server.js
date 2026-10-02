@@ -550,6 +550,56 @@ async function initDatabase() {
     console.log("Coluna stock_after adicionada em stock_movements");
   }
 
+  // ========== CARRINHOS (estoque levado por cada responsável) ==========
+  // Cada carrinho tem um "ciclo": começa na última atualização (abastecimento
+  // ou devolução). O uso é contado pelas movimentações do ciclo atual.
+  if (!(await db.schema.hasColumn("stock_movements", "cartId"))) {
+    await db.schema.table("stock_movements", (table) => {
+      table.integer("cartId");
+      table.integer("cartCycle");
+    });
+    console.log("Colunas cartId/cartCycle adicionadas em stock_movements");
+  }
+
+  if (!(await db.schema.hasTable("carts"))) {
+    await db.schema.createTable("carts", (table) => {
+      table.increments("id").primary();
+      table.string("name").notNullable();
+      table.string("responsible");
+      table.boolean("active").defaultTo(true);
+      table.integer("cycle").notNullable().defaultTo(1);
+      table.timestamp("cycle_started_at").defaultTo(db.fn.now());
+      table.timestamp("created_at").defaultTo(db.fn.now());
+    });
+    console.log("✅ Tabela 'carts' criada com sucesso");
+  }
+
+  if (!(await db.schema.hasTable("cart_items"))) {
+    await db.schema.createTable("cart_items", (table) => {
+      table.increments("id").primary();
+      table.integer("cart_id").notNullable();
+      table.string("productId").notNullable();
+      table.string("productName").notNullable();
+      table.integer("quantity").notNullable(); // carregado no início do ciclo
+    });
+    console.log("✅ Tabela 'cart_items' criada com sucesso");
+  }
+
+  if (!(await db.schema.hasTable("cart_returns"))) {
+    await db.schema.createTable("cart_returns", (table) => {
+      table.increments("id").primary();
+      table.integer("cart_id").notNullable();
+      table.integer("cycle").notNullable();
+      table.timestamp("cycle_started_at");
+      table.text("items").notNullable(); // JSON com carregado/usado/devido/devolvido
+      table.boolean("has_discrepancy").defaultTo(false);
+      table.integer("missing_total").defaultTo(0);
+      table.text("notes");
+      table.timestamp("created_at").defaultTo(db.fn.now());
+    });
+    console.log("✅ Tabela 'cart_returns' criada com sucesso");
+  }
+
   // Modo single-tenant: não cria tabela de lojas
   // Configure as credenciais Mercado Pago no .env
   // ...existing code...
@@ -896,15 +946,453 @@ app.get(
   async (req, res) => {
     try {
       const { start, end, productId } = req.query;
-      let query = db("stock_movements").orderBy("created_at", "desc");
-      if (start) query = query.where("created_at", ">=", start);
-      if (end) query = query.where("created_at", "<=", end);
-      if (productId) query = query.where({ productId });
+      let query = db("stock_movements")
+        .leftJoin("carts", "stock_movements.cartId", "carts.id")
+        .select(
+          "stock_movements.*",
+          "carts.name as cartName",
+          "carts.responsible as cartResponsible",
+        )
+        .orderBy("stock_movements.created_at", "desc");
+      if (start) query = query.where("stock_movements.created_at", ">=", start);
+      if (end) query = query.where("stock_movements.created_at", "<=", end);
+      if (productId) query = query.where("stock_movements.productId", productId);
       const movements = await query.limit(500);
       res.json(movements);
     } catch (e) {
       console.error("❌ Erro ao buscar movimentações de estoque:", e);
       res.status(500).json({ error: "Erro ao buscar movimentações" });
+    }
+  },
+);
+
+// ========== CARRINHOS ==========
+// Fluxo: abastecer (define o que saiu no carrinho) → movimentações de uso
+// (baixam o estoque) → devolução (confere o que voltou e fecha o ciclo).
+// Devido = carregado - usado no ciclo atual. Só é discrepância devolver menos.
+
+const toPositiveInt = (value) => {
+  const n = parseInt(value, 10);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+};
+
+// Monta o resumo do ciclo atual: carregado, usado e devido por produto
+async function buildCartSummary(cart, conn = db) {
+  const items = await conn("cart_items").where({ cart_id: cart.id });
+  const movements = await conn("stock_movements")
+    .where({ cartId: cart.id, cartCycle: cart.cycle, type: "cart_usage" })
+    .orderBy("created_at", "desc");
+
+  const byProduct = new Map();
+  for (const item of items) {
+    byProduct.set(String(item.productId), {
+      productId: String(item.productId),
+      productName: item.productName,
+      loaded: Number(item.quantity) || 0,
+      used: 0,
+    });
+  }
+  for (const m of movements) {
+    const key = String(m.productId);
+    const row = byProduct.get(key) || {
+      productId: key,
+      productName: m.productName,
+      loaded: 0,
+      used: 0,
+    };
+    row.used += Math.abs(Number(m.quantity) || 0);
+    byProduct.set(key, row);
+  }
+
+  const summaryItems = [...byProduct.values()]
+    .map((row) => ({ ...row, expected: Math.max(0, row.loaded - row.used) }))
+    .sort((a, b) => a.productName.localeCompare(b.productName, "pt-BR"));
+
+  const lastReturn = await conn("cart_returns")
+    .where({ cart_id: cart.id })
+    .orderBy("created_at", "desc")
+    .first();
+
+  return {
+    id: cart.id,
+    name: cart.name,
+    responsible: cart.responsible,
+    cycle: cart.cycle,
+    cycleStartedAt: cart.cycle_started_at,
+    items: summaryItems,
+    totals: summaryItems.reduce(
+      (acc, row) => ({
+        loaded: acc.loaded + row.loaded,
+        used: acc.used + row.used,
+        expected: acc.expected + row.expected,
+      }),
+      { loaded: 0, used: 0, expected: 0 },
+    ),
+    movements: movements.map((m) => ({
+      id: m.id,
+      productId: m.productId,
+      productName: m.productName,
+      quantity: Math.abs(Number(m.quantity) || 0),
+      created_at: m.created_at,
+    })),
+    lastReturn: lastReturn
+      ? {
+          id: lastReturn.id,
+          created_at: lastReturn.created_at,
+          hasDiscrepancy: !!lastReturn.has_discrepancy,
+          missingTotal: Number(lastReturn.missing_total) || 0,
+        }
+      : null,
+  };
+}
+
+const findActiveCart = (id, conn = db) =>
+  conn("carts").where({ id: parseInt(id, 10), active: true }).first();
+
+app.get("/api/admin/carts", authenticateToken, authorizeAdmin, async (req, res) => {
+  try {
+    const carts = await db("carts").where({ active: true }).orderBy("name");
+    const summaries = [];
+    for (const cart of carts) summaries.push(await buildCartSummary(cart));
+    res.json(summaries);
+  } catch (e) {
+    console.error("❌ Erro ao listar carrinhos:", e);
+    res.status(500).json({ error: "Erro ao listar carrinhos" });
+  }
+});
+
+app.post("/api/admin/carts", authenticateToken, authorizeAdmin, async (req, res) => {
+  const name = String(req.body?.name || "").trim();
+  const responsible = String(req.body?.responsible || "").trim();
+  if (!name) return res.status(400).json({ error: "Nome do carrinho é obrigatório" });
+  try {
+    const [inserted] = await db("carts")
+      .insert({
+        name,
+        responsible: responsible || null,
+        active: true,
+        cycle: 1,
+        cycle_started_at: new Date(),
+        created_at: new Date(),
+      })
+      .returning("id");
+    const id = typeof inserted === "object" ? inserted.id : inserted;
+    const cart = await db("carts").where({ id }).first();
+    res.status(201).json(await buildCartSummary(cart));
+  } catch (e) {
+    console.error("❌ Erro ao criar carrinho:", e);
+    res.status(500).json({ error: "Erro ao criar carrinho" });
+  }
+});
+
+app.put("/api/admin/carts/:id", authenticateToken, authorizeAdmin, async (req, res) => {
+  try {
+    const cart = await findActiveCart(req.params.id);
+    if (!cart) return res.status(404).json({ error: "Carrinho não encontrado" });
+    const updates = {};
+    if (req.body?.name !== undefined) {
+      const name = String(req.body.name).trim();
+      if (!name) return res.status(400).json({ error: "Nome do carrinho é obrigatório" });
+      updates.name = name;
+    }
+    if (req.body?.responsible !== undefined) {
+      updates.responsible = String(req.body.responsible).trim() || null;
+    }
+    if (Object.keys(updates).length) await db("carts").where({ id: cart.id }).update(updates);
+    res.json(await buildCartSummary({ ...cart, ...updates }));
+  } catch (e) {
+    console.error("❌ Erro ao atualizar carrinho:", e);
+    res.status(500).json({ error: "Erro ao atualizar carrinho" });
+  }
+});
+
+app.delete("/api/admin/carts/:id", authenticateToken, authorizeAdmin, async (req, res) => {
+  try {
+    const cart = await findActiveCart(req.params.id);
+    if (!cart) return res.status(404).json({ error: "Carrinho não encontrado" });
+    const summary = await buildCartSummary(cart);
+    if (summary.totals.expected > 0) {
+      return res.status(400).json({
+        error: "Registre a devolução antes de remover: o carrinho ainda tem produtos a devolver.",
+      });
+    }
+    await db("carts").where({ id: cart.id }).update({ active: false });
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("❌ Erro ao remover carrinho:", e);
+    res.status(500).json({ error: "Erro ao remover carrinho" });
+  }
+});
+
+// Abastecer: o que ainda está no carrinho (devido) + o que foi adicionado vira
+// a nova carga, e o ciclo recomeça (conta uso a partir desta atualização).
+app.post(
+  "/api/admin/carts/:id/load",
+  authenticateToken,
+  authorizeAdmin,
+  async (req, res) => {
+    const additions = (Array.isArray(req.body?.items) ? req.body.items : [])
+      .map((i) => ({ productId: String(i.productId || ""), quantity: toPositiveInt(i.quantity) }))
+      .filter((i) => i.productId && i.quantity > 0);
+    if (!additions.length) {
+      return res.status(400).json({ error: "Informe ao menos um produto com quantidade" });
+    }
+    try {
+      const result = await db.transaction(async (trx) => {
+        const cart = await findActiveCart(req.params.id, trx);
+        if (!cart) return null;
+        const summary = await buildCartSummary(cart, trx);
+
+        const next = new Map();
+        for (const row of summary.items) {
+          if (row.expected > 0) {
+            next.set(row.productId, { productName: row.productName, quantity: row.expected });
+          }
+        }
+        for (const add of additions) {
+          const product = await trx("products").where({ id: add.productId }).first();
+          if (!product) {
+            const err = new Error(`Produto ${add.productId} não encontrado`);
+            err.status = 400;
+            throw err;
+          }
+          const current = next.get(add.productId);
+          next.set(add.productId, {
+            productName: product.name,
+            quantity: (current?.quantity || 0) + add.quantity,
+          });
+        }
+
+        await trx("cart_items").where({ cart_id: cart.id }).del();
+        if (next.size) {
+          await trx("cart_items").insert(
+            [...next.entries()].map(([productId, v]) => ({
+              cart_id: cart.id,
+              productId,
+              productName: v.productName,
+              quantity: v.quantity,
+            })),
+          );
+        }
+        const updated = { cycle: cart.cycle + 1, cycle_started_at: new Date() };
+        await trx("carts").where({ id: cart.id }).update(updated);
+        return buildCartSummary({ ...cart, ...updated }, trx);
+      });
+      if (!result) return res.status(404).json({ error: "Carrinho não encontrado" });
+      res.json(result);
+    } catch (e) {
+      if (e.status) return res.status(e.status).json({ error: e.message });
+      console.error("❌ Erro ao abastecer carrinho:", e);
+      res.status(500).json({ error: "Erro ao abastecer carrinho" });
+    }
+  },
+);
+
+// Movimentação de uso do carrinho: baixa o estoque e conta como usado no ciclo
+app.post(
+  "/api/admin/carts/:id/usage",
+  authenticateToken,
+  authorizeAdmin,
+  async (req, res) => {
+    const usages = (Array.isArray(req.body?.items) ? req.body.items : [])
+      .map((i) => ({ productId: String(i.productId || ""), quantity: toPositiveInt(i.quantity) }))
+      .filter((i) => i.productId && i.quantity > 0);
+    if (!usages.length) {
+      return res.status(400).json({ error: "Informe ao menos um produto com quantidade" });
+    }
+    try {
+      const result = await db.transaction(async (trx) => {
+        const cart = await findActiveCart(req.params.id, trx);
+        if (!cart) return null;
+        const summary = await buildCartSummary(cart, trx);
+        const remaining = new Map(summary.items.map((r) => [r.productId, r.expected]));
+
+        for (const use of usages) {
+          const available = remaining.get(use.productId) || 0;
+          const product = await trx("products").where({ id: use.productId }).first();
+          if (!product) {
+            const err = new Error(`Produto ${use.productId} não encontrado`);
+            err.status = 400;
+            throw err;
+          }
+          if (use.quantity > available) {
+            const err = new Error(
+              `${product.name}: só há ${available} no carrinho "${cart.name}" (tentou usar ${use.quantity})`,
+            );
+            err.status = 400;
+            throw err;
+          }
+          remaining.set(use.productId, available - use.quantity);
+
+          const hasStock = product.stock !== null && product.stock !== undefined;
+          const stockBefore = hasStock ? Number(product.stock) || 0 : null;
+          const stockAfter = hasStock ? stockBefore - use.quantity : null;
+          if (hasStock) {
+            await trx("products").where({ id: product.id }).update({ stock: stockAfter });
+          }
+          await trx("stock_movements").insert({
+            productId: product.id,
+            productName: product.name,
+            quantity: -use.quantity,
+            type: "cart_usage",
+            cartId: cart.id,
+            cartCycle: cart.cycle,
+            stock_before: stockBefore,
+            stock_after: stockAfter,
+            created_at: new Date(),
+          });
+        }
+        return buildCartSummary(cart, trx);
+      });
+      if (!result) return res.status(404).json({ error: "Carrinho não encontrado" });
+      res.json(result);
+    } catch (e) {
+      if (e.status) return res.status(e.status).json({ error: e.message });
+      console.error("❌ Erro ao registrar uso do carrinho:", e);
+      res.status(500).json({ error: "Erro ao registrar uso do carrinho" });
+    }
+  },
+);
+
+// Desfaz uma movimentação de uso do ciclo atual (devolve ao estoque)
+app.delete(
+  "/api/admin/carts/usage/:movementId",
+  authenticateToken,
+  authorizeAdmin,
+  async (req, res) => {
+    try {
+      const ok = await db.transaction(async (trx) => {
+        const movement = await trx("stock_movements")
+          .where({ id: parseInt(req.params.movementId, 10), type: "cart_usage" })
+          .first();
+        if (!movement) return "not_found";
+        const cart = await trx("carts").where({ id: movement.cartId }).first();
+        if (!cart || Number(cart.cycle) !== Number(movement.cartCycle)) {
+          return "closed";
+        }
+        const product = await trx("products").where({ id: movement.productId }).first();
+        if (product && product.stock !== null && product.stock !== undefined) {
+          await trx("products")
+            .where({ id: product.id })
+            .update({ stock: (Number(product.stock) || 0) + Math.abs(Number(movement.quantity) || 0) });
+        }
+        await trx("stock_movements").where({ id: movement.id }).del();
+        return "ok";
+      });
+      if (ok === "not_found") return res.status(404).json({ error: "Movimentação não encontrada" });
+      if (ok === "closed") {
+        return res.status(400).json({
+          error: "Essa movimentação é de um ciclo já fechado (carrinho atualizado depois dela).",
+        });
+      }
+      res.json({ ok: true });
+    } catch (e) {
+      console.error("❌ Erro ao desfazer uso do carrinho:", e);
+      res.status(500).json({ error: "Erro ao desfazer uso do carrinho" });
+    }
+  },
+);
+
+// Devolução: confere o que voltou contra o devido do ciclo e fecha o ciclo.
+// Discrepância só quando devolvido < devido (devolver a mais não é discrepância).
+app.post(
+  "/api/admin/carts/:id/return",
+  authenticateToken,
+  authorizeAdmin,
+  async (req, res) => {
+    const returned = new Map(
+      (Array.isArray(req.body?.items) ? req.body.items : []).map((i) => [
+        String(i.productId || ""),
+        Math.max(0, parseInt(i.returned, 10) || 0),
+      ]),
+    );
+    const notes = String(req.body?.notes || "").trim() || null;
+    try {
+      const result = await db.transaction(async (trx) => {
+        const cart = await findActiveCart(req.params.id, trx);
+        if (!cart) return null;
+        const summary = await buildCartSummary(cart, trx);
+        if (!summary.items.length) {
+          const err = new Error("O carrinho está vazio, não há o que devolver");
+          err.status = 400;
+          throw err;
+        }
+
+        const items = summary.items.map((row) => {
+          const back = returned.get(row.productId) || 0;
+          return {
+            productId: row.productId,
+            productName: row.productName,
+            loaded: row.loaded,
+            used: row.used,
+            expected: row.expected,
+            returned: back,
+            missing: Math.max(0, row.expected - back),
+            surplus: Math.max(0, back - row.expected),
+          };
+        });
+        const missingTotal = items.reduce((sum, i) => sum + i.missing, 0);
+
+        const [inserted] = await trx("cart_returns")
+          .insert({
+            cart_id: cart.id,
+            cycle: cart.cycle,
+            cycle_started_at: cart.cycle_started_at,
+            items: JSON.stringify(items),
+            has_discrepancy: missingTotal > 0,
+            missing_total: missingTotal,
+            notes,
+            created_at: new Date(),
+          })
+          .returning("id");
+
+        await trx("cart_items").where({ cart_id: cart.id }).del();
+        const updated = { cycle: cart.cycle + 1, cycle_started_at: new Date() };
+        await trx("carts").where({ id: cart.id }).update(updated);
+
+        return {
+          returnId: typeof inserted === "object" ? inserted.id : inserted,
+          hasDiscrepancy: missingTotal > 0,
+          missingTotal,
+          items,
+          cart: await buildCartSummary({ ...cart, ...updated }, trx),
+        };
+      });
+      if (!result) return res.status(404).json({ error: "Carrinho não encontrado" });
+      res.json(result);
+    } catch (e) {
+      if (e.status) return res.status(e.status).json({ error: e.message });
+      console.error("❌ Erro ao registrar devolução do carrinho:", e);
+      res.status(500).json({ error: "Erro ao registrar devolução" });
+    }
+  },
+);
+
+app.get(
+  "/api/admin/carts/:id/returns",
+  authenticateToken,
+  authorizeAdmin,
+  async (req, res) => {
+    try {
+      const rows = await db("cart_returns")
+        .where({ cart_id: parseInt(req.params.id, 10) })
+        .orderBy("created_at", "desc")
+        .limit(50);
+      res.json(
+        rows.map((r) => ({
+          id: r.id,
+          cycle: r.cycle,
+          cycleStartedAt: r.cycle_started_at,
+          created_at: r.created_at,
+          hasDiscrepancy: !!r.has_discrepancy,
+          missingTotal: Number(r.missing_total) || 0,
+          notes: r.notes,
+          items: parseJSON(r.items),
+        })),
+      );
+    } catch (e) {
+      console.error("❌ Erro ao buscar devoluções do carrinho:", e);
+      res.status(500).json({ error: "Erro ao buscar devoluções" });
     }
   },
 );
