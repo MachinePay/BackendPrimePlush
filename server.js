@@ -74,10 +74,9 @@ const KITCHEN_PASSWORD = process.env.KITCHEN_PASSWORD;
 const SUPER_ADMIN_PASSWORD = process.env.SUPER_ADMIN_PASSWORD;
 const JWT_SECRET = process.env.JWT_SECRET;
 const REDIS_URL = process.env.REDIS_URL;
-const STOCK_OVERRIDE_PIN = process.env.STOCK_OVERRIDE_PIN || "6420";
 
-// Permite pedir um produto mesmo sem estoque (uso interno/balcão). O PIN
-// nunca é validado no frontend: aqui o backend confere o PIN e emite um
+// Permite pedir um produto mesmo sem estoque (uso interno/balcão). A senha
+// de admin nunca é validada no frontend: aqui o backend confere a senha e emite um
 // token JWT de curta duração que autoriza aquele pedido a deixar o estoque
 // negativo. Sem token válido, a checagem normal de estoque continua valendo.
 function signStockOverrideToken() {
@@ -814,9 +813,9 @@ app.post("/api/auth/login", (req, res) => {
   }
 });
 
-// Verifica o PIN de liberação de pedido sem estoque (uso interno/balcão).
-// Retorna um token curto que autoriza APENAS o item enviado no pedido a
-// deixar o estoque negativo; o PIN em si nunca sai do backend.
+// Verifica a senha de admin para liberar pedido sem estoque (uso
+// interno/balcão). Retorna um token curto que autoriza APENAS o item enviado
+// no pedido a deixar o estoque negativo; a senha nunca sai do backend.
 app.post("/api/stock-override/verify", (req, res) => {
   const { pin } = req.body;
 
@@ -827,8 +826,17 @@ app.post("/api/stock-override/verify", (req, res) => {
       .json({ success: false, message: "Erro de configuração no servidor." });
   }
 
-  if (!pin || String(pin) !== STOCK_OVERRIDE_PIN) {
-    return res.status(401).json({ success: false, message: "PIN inválido" });
+  if (!ADMIN_PASSWORD) {
+    console.error("🚨 ADMIN_PASSWORD não está configurado!");
+    return res
+      .status(500)
+      .json({ success: false, message: "Erro de configuração no servidor." });
+  }
+
+  if (!pin || String(pin) !== ADMIN_PASSWORD) {
+    return res
+      .status(401)
+      .json({ success: false, message: "Senha de admin inválida" });
   }
 
   const token = signStockOverrideToken();
@@ -2687,8 +2695,8 @@ app.post("/api/orders", async (req, res) => {
           id: item.id,
           name: item.name,
           quantity: 0,
-          // PIN de balcão (6420) já verificado no /api/stock-override/verify;
-          // aqui só confirmamos a assinatura do token, não o PIN de novo.
+          // Senha de admin já verificada no /api/stock-override/verify;
+          // aqui só confirmamos a assinatura do token, não a senha de novo.
           forceOverride:
             Boolean(item.forceOverride) &&
             isValidStockOverrideToken(item.overrideToken),
