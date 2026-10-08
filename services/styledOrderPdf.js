@@ -143,11 +143,13 @@ export function generateStyledOrderPdf(order, res) {
 
     let tipoDesc = "";
     if (typeof tipoPagamento === "string") {
-      if (tipoPagamento.toLowerCase().includes("pix")) tipoDesc = "PIX";
-      else if (tipoPagamento.toLowerCase().includes("debito"))
-        tipoDesc = "Cartão Débito";
-      else if (tipoPagamento.toLowerCase().includes("credito"))
-        tipoDesc = "Cartão Crédito";
+      const tipo = tipoPagamento.toLowerCase();
+      if (tipo.includes("pix")) tipoDesc = "PIX";
+      else if (tipo.includes("debit")) tipoDesc = "Cartão Débito";
+      else if (tipo.includes("credit")) tipoDesc = "Cartão Crédito";
+      else if (tipo === "cash" || tipo === "dinheiro") tipoDesc = "Dinheiro";
+      else if (tipo === "cheque") tipoDesc = "Cheque";
+      else if (tipo === "boleto") tipoDesc = "Boleto";
       else tipoDesc = tipoPagamento;
     }
 
@@ -167,6 +169,24 @@ export function generateStyledOrderPdf(order, res) {
         });
       rightCurrentY +=
         doc.heightOfString(parceladoText, { width: rightWidth }) + 4;
+    }
+
+    // Dinheiro: valor recebido e troco
+    if (
+      tipoDesc === "Dinheiro" &&
+      order.cashReceived !== null &&
+      order.cashReceived !== undefined
+    ) {
+      const cashLines = [
+        `Valor recebido: R$ ${Number(order.cashReceived).toFixed(2)}`,
+        `Troco: R$ ${Number(order.cashChange || 0).toFixed(2)}`,
+      ];
+      cashLines.forEach((line) => {
+        doc.fontSize(11).font("Helvetica").text(line, rightX, rightCurrentY, {
+          width: rightWidth,
+        });
+        rightCurrentY += doc.heightOfString(line, { width: rightWidth }) + 4;
+      });
     }
   }
 

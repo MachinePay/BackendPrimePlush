@@ -288,6 +288,9 @@ async function initDatabase() {
     { name: "paymentMethod", type: "string" },
     { name: "installments", type: "integer" },
     { name: "fee", type: "decimal" },
+    // Pagamento em dinheiro na loja: valor entregue pelo cliente e troco
+    { name: "cashReceived", type: "decimal" },
+    { name: "cashChange", type: "decimal" },
   ];
   for (const col of paymentCols) {
     const hasCol = await db.schema.hasColumn("orders", col.name);
@@ -1106,6 +1109,18 @@ app.get(
 
         if (normalized.includes("pix")) {
           return { key: "pix", label: "Pix" };
+        }
+
+        if (["cash", "dinheiro", "money"].includes(normalized)) {
+          return { key: "cash", label: "Dinheiro" };
+        }
+
+        if (normalized === "cheque") {
+          return { key: "cheque", label: "Cheque" };
+        }
+
+        if (normalized === "boleto" || normalized === "bolbradesco") {
+          return { key: "boleto", label: "Boleto" };
         }
 
         const debitMethods = new Set([
@@ -2667,7 +2682,23 @@ app.post("/api/orders", async (req, res) => {
     paymentMethod,
     installments,
     fee,
+    cashReceived,
   } = req.body;
+
+  // Dinheiro: valida o valor recebido e calcula o troco no servidor
+  let cashReceivedValue = null;
+  let cashChangeValue = null;
+  if (paymentMethod === "cash" && cashReceived !== undefined && cashReceived !== null && cashReceived !== "") {
+    const received = Number(cashReceived);
+    const orderTotal = Number(total) || 0;
+    if (!Number.isFinite(received) || received < orderTotal) {
+      return res.status(400).json({
+        error: "Valor recebido em dinheiro menor que o total do pedido",
+      });
+    }
+    cashReceivedValue = Number(received.toFixed(2));
+    cashChangeValue = Number((received - orderTotal).toFixed(2));
+  }
 
   try {
     // Iniciamos uma transação para garantir integridade dos dados
@@ -2783,6 +2814,8 @@ app.post("/api/orders", async (req, res) => {
         observation: observation || null,
         installments: installments || null,
         fee: fee || null,
+        cashReceived: cashReceivedValue,
+        cashChange: cashChangeValue,
         created_at: new Date(),
       };
 
