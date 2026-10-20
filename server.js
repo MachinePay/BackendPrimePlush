@@ -2852,6 +2852,7 @@ app.post("/api/orders", async (req, res) => {
               orderId: null,
               stockBefore: currentStock,
               stockAfter: currentStock,
+              conn: trx,
             });
             continue;
           }
@@ -2920,7 +2921,10 @@ app.post("/api/orders", async (req, res) => {
     });
   } catch (e) {
     console.error("❌ Erro ao salvar pedido:", e);
-    res.status(500).json({ error: e.message || "Erro ao salvar ordem" });
+    const isStockError = /Estoque insuficiente/.test(e.message || "");
+    res
+      .status(isStockError ? 409 : 500)
+      .json({ error: e.message || "Erro ao salvar ordem" });
   }
 });
 
