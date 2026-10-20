@@ -2805,11 +2805,13 @@ app.post("/api/orders", async (req, res) => {
           id: item.id,
           name: item.name,
           quantity: 0,
-          // Senha de admin já verificada no /api/stock-override/verify;
+          // Venda do admin pode passar do estoque. Fora isso, vale o PIN:
+          // senha de admin já verificada no /api/stock-override/verify;
           // aqui só confirmamos a assinatura do token, não a senha de novo.
           forceOverride:
-            Boolean(item.forceOverride) &&
-            isValidStockOverrideToken(item.overrideToken),
+            isAdminSale ||
+            (Boolean(item.forceOverride) &&
+              isValidStockOverrideToken(item.overrideToken)),
         };
         current.quantity += quantity;
         requestedItems.set(item.id, current);
