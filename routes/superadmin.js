@@ -273,74 +273,7 @@ router.get("/super-admin/receivables", superAdminAuth, async (req, res) => {
   }
 });
 
-// Endpoint para marcar pedido como entregue ao cliente
-router.put("/orders/:id/mark-delivered", async (req, res) => {
-  try {
-    const { id } = req.params;
-
-    const order = await db("orders").where({ id }).first();
-    if (!order) {
-      return res
-        .status(404)
-        .json({ success: false, message: "Pedido não encontrado." });
-    }
-
-    // Só desconta estoque se ainda não foi descontado via pagamento
-    const alreadyPaid =
-      order.paymentStatus === "paid" || order.paymentStatus === "authorized";
-    if (!alreadyPaid) {
-      let items = [];
-      try {
-        items =
-          typeof order.items === "string"
-            ? JSON.parse(order.items)
-            : order.items;
-      } catch (err) {
-        console.error("[mark-delivered] Erro ao parsear itens:", err);
-      }
-
-      for (const item of items) {
-        const product = await db("products").where({ id: item.id }).first();
-        if (product && product.stock !== null) {
-          // Sem floor em 0: pedido liberado via PIN de balcão pode ficar
-          // negativo de propósito.
-          const newStock = product.stock - item.quantity;
-          const newReserved = Math.max(
-            0,
-            (product.stock_reserved || 0) - item.quantity,
-          );
-          await db("products").where({ id: item.id }).update({
-            stock: newStock,
-            stock_reserved: newReserved,
-          });
-          console.log(
-            `  ✅ [mark-delivered] ${item.name}: ${product.stock} → ${newStock} (-${item.quantity})`,
-          );
-        }
-      }
-    } else {
-      console.log(
-        `⚠️ [mark-delivered] Estoque já descontado via pagamento. Pulando dedução.`,
-      );
-    }
-
-    const updated = await db("orders")
-      .where({ id })
-      .update({ entregueCliente: 1 });
-    if (updated) {
-      return res.json({
-        success: true,
-        message: "Pedido marcado como entregue ao cliente.",
-      });
-    } else {
-      return res
-        .status(404)
-        .json({ success: false, message: "Pedido não encontrado." });
-    }
-  } catch (err) {
-    console.error("[ERRO] PUT /orders/:id/mark-delivered", err);
-    return res.status(500).json({ success: false, error: err.message });
-  }
-});
+// A entrega ao cliente (total ou parcial) fica em server.js:
+// PUT /api/orders/:id/mark-delivered
 
 export default router;

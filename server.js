@@ -152,9 +152,10 @@ async function logStockMovement({
   orderId = null,
   stockBefore = null,
   stockAfter = null,
+  conn = db,
 }) {
   try {
-    await db("stock_movements").insert({
+    await conn("stock_movements").insert({
       productId,
       productName,
       quantity, // negativo = saída, positivo = entrada
@@ -168,6 +169,75 @@ async function logStockMovement({
     console.warn("⚠️ Erro ao registrar movimentação de estoque:", e.message);
   }
 }
+
+// Quanto do item já saiu do estoque real. Pedidos antigos não guardam
+// `stockDeducted`: nesses, pago ou entregue significa tudo descontado.
+const getItemStockDeducted = (order, item) => {
+  if (item.stockDeducted !== undefined && item.stockDeducted !== null) {
+    return Number(item.stockDeducted) || 0;
+  }
+  const legacyDeducted =
+    order.entregueCliente == 1 ||
+    order.paymentStatus === "paid" ||
+    order.paymentStatus === "authorized";
+  return legacyDeducted ? Number(item.quantity) || 0 : 0;
+};
+
+// Desconta do estoque a diferença entre `targetFor(item)` e o que o item já
+// teve descontado, liberando a mesma quantidade da reserva. Idempotente.
+// Retorna os itens com `stockDeducted` atualizado (o chamador salva no pedido).
+async function deductOrderStock(order, items, targetFor, conn = db) {
+  const updatedItems = [];
+  for (const item of items) {
+    const quantity = Number(item.quantity) || 0;
+    const already = getItemStockDeducted(order, item);
+    const target = Math.min(quantity, Math.max(0, Number(targetFor(item)) || 0));
+    const delta = target - already;
+
+    if (delta > 0) {
+      const product = await conn("products").where({ id: item.id }).first();
+      if (product && product.stock !== null) {
+        // Sem floor em 0: pedido liberado via PIN de balcão pode ficar
+        // negativo de propósito.
+        const newStock = product.stock - delta;
+        const newReserved = Math.max(0, (product.stock_reserved || 0) - delta);
+        await conn("products").where({ id: item.id }).update({
+          stock: newStock,
+          stock_reserved: newReserved,
+        });
+        await logStockMovement({
+          productId: item.id,
+          productName: item.name,
+          quantity: -delta,
+          type: "sale",
+          orderId: order.id,
+          stockBefore: Number(product.stock) || 0,
+          stockAfter: newStock,
+          conn,
+        });
+        console.log(
+          `  ✅ ${item.name}: ${product.stock} → ${newStock} (-${delta}), reserva: ${product.stock_reserved} → ${newReserved}`,
+        );
+      }
+    }
+
+    updatedItems.push({ ...item, stockDeducted: Math.max(already, target) });
+  }
+  return updatedItems;
+}
+
+// Payload do token se for de admin válido; null caso contrário.
+const getAdminTokenPayload = (req) => {
+  const authHeader = req.headers["authorization"];
+  const token = authHeader && authHeader.split(" ")[1];
+  if (!token) return null;
+  try {
+    const payload = jwt.verify(token, JWT_SECRET);
+    return payload?.role === "admin" ? payload : null;
+  } catch {
+    return null;
+  }
+};
 
 const dbType = process.env.DATABASE_URL
   ? "PostgreSQL (Render)"
@@ -291,6 +361,10 @@ async function initDatabase() {
     // Pagamento em dinheiro na loja: valor entregue pelo cliente e troco
     { name: "cashReceived", type: "decimal" },
     { name: "cashChange", type: "decimal" },
+    // Entrega ao cliente (total ou parcial)
+    { name: "entregueCliente", type: "boolean" },
+    // Venda feita pelo admin: o estoque só é descontado conforme a entrega
+    { name: "deductOnDelivery", type: "boolean" },
   ];
   for (const col of paymentCols) {
     const hasCol = await db.schema.hasColumn("orders", col.name);
@@ -299,6 +373,7 @@ async function initDatabase() {
         if (col.type === "string") table.string(col.name);
         if (col.type === "integer") table.integer(col.name);
         if (col.type === "decimal") table.decimal(col.name, 8, 2);
+        if (col.type === "boolean") table.boolean(col.name).defaultTo(false);
       });
       console.log(`✅ Coluna '${col.name}' adicionada à tabela orders`);
     }
@@ -2700,6 +2775,10 @@ app.post("/api/orders", async (req, res) => {
     cashChangeValue = Number((received - orderTotal).toFixed(2));
   }
 
+  // Venda feita pelo admin (com token válido): o estoque fica reservado e só
+  // é descontado conforme os itens forem entregues.
+  const isAdminSale = Boolean(getAdminTokenPayload(req));
+
   try {
     // Iniciamos uma transação para garantir integridade dos dados
     await db.transaction(async (trx) => {
@@ -2816,6 +2895,7 @@ app.post("/api/orders", async (req, res) => {
         fee: fee || null,
         cashReceived: cashReceivedValue,
         cashChange: cashChangeValue,
+        deductOnDelivery: isAdminSale,
         created_at: new Date(),
       };
 
@@ -2879,45 +2959,21 @@ app.put("/api/orders/:id/mark-paid", async (req, res) => {
         .json({ error: "Erro ao processar itens do pedido" });
     }
 
-    // Só desconta estoque se ainda não foi descontado via mark-delivered
-    const alreadyDeducted =
-      order.entregueCliente == 1 ||
-      order.paymentStatus === "paid" ||
-      order.paymentStatus === "authorized";
-    if (!alreadyDeducted) {
-      for (const item of items) {
-        const product = await db("products").where({ id: item.id }).first();
-        if (product && product.stock !== null) {
-          // Sem floor em 0: um pedido liberado via PIN de balcão pode
-          // deixar o estoque negativo de propósito.
-          const newStock = product.stock - item.quantity;
-          const newReserved = Math.max(
-            0,
-            (product.stock_reserved || 0) - item.quantity,
-          );
-          await db("products").where({ id: item.id }).update({
-            stock: newStock,
-            stock_reserved: newReserved,
-          });
-          await logStockMovement({
-            productId: item.id,
-            productName: item.name,
-            quantity: -item.quantity,
-            type: "sale",
-            orderId: id,
-            stockBefore: Number(product.stock) || 0,
-            stockAfter: newStock,
-          });
-          console.log(
-            `  ✅ [mark-paid] ${item.name}: ${product.stock} → ${newStock} (-${item.quantity})`,
-          );
-        }
-      }
+    const updates = { paymentStatus: "paid" };
+    // Pedido que desconta na entrega: pagar não mexe no estoque.
+    if (order.deductOnDelivery) {
+      console.log(`ℹ️ [mark-paid] Estoque segue a entrega. Pulando dedução.`);
     } else {
-      console.log(`⚠️ [mark-paid] Estoque já descontado. Pulando dedução.`);
+      // Desconta só o que ainda não saiu (ex.: já descontado na entrega)
+      const updatedItems = await deductOrderStock(
+        order,
+        items,
+        (item) => item.quantity,
+      );
+      updates.items = JSON.stringify(updatedItems);
     }
 
-    await db("orders").where({ id }).update({ paymentStatus: "paid" });
+    await db("orders").where({ id }).update(updates);
     res.json({
       success: true,
       message: "Pedido marcado como pago e estoque atualizado",
@@ -2925,6 +2981,114 @@ app.put("/api/orders/:id/mark-paid", async (req, res) => {
   } catch (e) {
     console.error("❌ Erro ao marcar pedido como pago:", e);
     res.status(500).json({ error: "Erro ao marcar pedido como pago" });
+  }
+});
+
+// Marca a entrega ao cliente.
+// - Sem body: entrega tudo o que falta.
+// - Com body { items: [{ id, quantity }] }: entrega parcial (apenas admin),
+//   onde quantity é quanto está sendo entregue agora de cada produto.
+// O estoque é descontado apenas pelo que foi entregue e ainda não tinha saído.
+app.put("/api/orders/:id/mark-delivered", async (req, res) => {
+  const { id } = req.params;
+  const partialItems = Array.isArray(req.body?.items) ? req.body.items : null;
+
+  if (partialItems && !getAdminTokenPayload(req)) {
+    return res.status(403).json({
+      success: false,
+      message: "Entrega parcial requer permissão de administrador.",
+    });
+  }
+
+  try {
+    const result = await db.transaction(async (trx) => {
+      const order = await trx("orders").where({ id }).first();
+      if (!order) {
+        const notFound = new Error("Pedido não encontrado.");
+        notFound.status = 404;
+        throw notFound;
+      }
+
+      const items = parseJSON(order.items);
+      const deliveringNow = new Map();
+      if (partialItems) {
+        for (const entry of partialItems) {
+          const quantity = Number(entry?.quantity) || 0;
+          if (!entry?.id || quantity <= 0) continue;
+          deliveringNow.set(
+            entry.id,
+            (deliveringNow.get(entry.id) || 0) + Math.floor(quantity),
+          );
+        }
+        if (deliveringNow.size === 0) {
+          const invalid = new Error("Informe a quantidade a entregar.");
+          invalid.status = 400;
+          throw invalid;
+        }
+      }
+
+      const deliveredItems = items.map((item) => {
+        const quantity = Number(item.quantity) || 0;
+        const alreadyDelivered =
+          item.deliveredQuantity !== undefined && item.deliveredQuantity !== null
+            ? Number(item.deliveredQuantity) || 0
+            : order.entregueCliente == 1
+              ? quantity
+              : 0;
+        const remaining = Math.max(0, quantity - alreadyDelivered);
+        const now = partialItems
+          ? deliveringNow.get(item.id || item.productId) || 0
+          : remaining;
+
+        if (now > remaining) {
+          const invalid = new Error(
+            `Quantidade de ${item.name} maior que a pendente (${remaining}).`,
+          );
+          invalid.status = 400;
+          throw invalid;
+        }
+        return { ...item, deliveredQuantity: alreadyDelivered + now };
+      });
+
+      // Desconta o estoque do que foi entregue. Para pedido já pago (sem
+      // deductOnDelivery) o estoque já saiu no pagamento e nada muda aqui.
+      const updatedItems = await deductOrderStock(
+        order,
+        deliveredItems,
+        (item) => item.deliveredQuantity,
+        trx,
+      );
+
+      const fullyDelivered = updatedItems.every(
+        (item) => item.deliveredQuantity >= (Number(item.quantity) || 0),
+      );
+
+      await trx("orders")
+        .where({ id })
+        .update({
+          items: JSON.stringify(updatedItems),
+          entregueCliente: fullyDelivered,
+          // A partir da primeira entrega parcial o estoque segue a entrega
+          ...(partialItems ? { deductOnDelivery: true } : {}),
+        });
+
+      return { items: updatedItems, fullyDelivered };
+    });
+
+    return res.json({
+      success: true,
+      message: result.fullyDelivered
+        ? "Pedido marcado como entregue ao cliente."
+        : "Entrega parcial registrada.",
+      entregueCliente: result.fullyDelivered,
+      items: result.items,
+    });
+  } catch (e) {
+    if (e.status) {
+      return res.status(e.status).json({ success: false, message: e.message });
+    }
+    console.error("❌ Erro ao marcar pedido como entregue:", e);
+    res.status(500).json({ success: false, error: e.message });
   }
 });
 
@@ -3002,43 +3166,19 @@ app.put("/api/orders/:id", async (req, res) => {
     }
 
     // Se pagamento foi aprovado, CONFIRMA a dedução do estoque
-    if (isPaymentApproved && order.paymentStatus === "pending") {
+    if (
+      isPaymentApproved &&
+      order.paymentStatus === "pending" &&
+      !order.deductOnDelivery
+    ) {
       console.log(`✅ Pagamento aprovado! Confirmando dedução do estoque...`);
 
-      const items = parseJSON(order.items);
-
-      for (const item of items) {
-        const product = await db("products").where({ id: item.id }).first();
-
-        if (product && product.stock !== null) {
-          // Deduz do estoque real e libera da reserva. Sem floor em 0:
-          // pedido liberado via PIN de balcão pode ficar negativo.
-          const newStock = product.stock - item.quantity;
-          const newReserved = Math.max(
-            0,
-            (product.stock_reserved || 0) - item.quantity,
-          );
-
-          await db("products").where({ id: item.id }).update({
-            stock: newStock,
-            stock_reserved: newReserved,
-          });
-
-          await logStockMovement({
-            productId: item.id,
-            productName: item.name,
-            quantity: -item.quantity,
-            type: "sale",
-            orderId: id,
-            stockBefore: Number(product.stock) || 0,
-            stockAfter: newStock,
-          });
-
-          console.log(
-            `  ✅ ${item.name}: ${product.stock} → ${newStock} (-${item.quantity}), reserva: ${product.stock_reserved} → ${newReserved}`,
-          );
-        }
-      }
+      const updatedItems = await deductOrderStock(
+        order,
+        parseJSON(order.items),
+        (item) => item.quantity,
+      );
+      updates.items = JSON.stringify(updatedItems);
 
       console.log(`🎉 Estoque confirmado e deduzido!`);
     }
@@ -3169,13 +3309,6 @@ app.delete(
           throw notFoundError;
         }
 
-        const normalizedPaymentStatus = String(
-          order.paymentStatus || "",
-        ).toLowerCase();
-        const shouldRestoreStock = ["paid", "authorized", "approved"].includes(
-          normalizedPaymentStatus,
-        );
-
         const items = parseJSON(order.items);
 
         for (const item of Array.isArray(items) ? items : []) {
@@ -3195,22 +3328,28 @@ app.delete(
 
           const currentStock = Number(product.stock) || 0;
           const currentReserved = Number(product.stock_reserved) || 0;
+          // Devolve ao estoque o que já saiu; o restante ainda estava reservado
+          const deducted = Math.min(
+            quantity,
+            getItemStockDeducted(order, item),
+          );
 
-          const nextStock = shouldRestoreStock
-            ? currentStock + quantity
-            : currentStock;
-          const nextReserved = Math.max(0, currentReserved - quantity);
+          const nextStock = currentStock + deducted;
+          const nextReserved = Math.max(
+            0,
+            currentReserved - (quantity - deducted),
+          );
 
           await trx("products").where({ id: productId }).update({
             stock: nextStock,
             stock_reserved: nextReserved,
           });
 
-          if (shouldRestoreStock && nextStock !== currentStock) {
+          if (nextStock !== currentStock) {
             await trx("stock_movements").insert({
               productId,
               productName: item?.name || "Produto",
-              quantity,
+              quantity: deducted,
               type: "return",
               orderId: id,
               stock_before: currentStock,
@@ -3747,43 +3886,15 @@ app.post("/api/webhooks/mercadopago", async (req, res) => {
                 const items = parseJSON(order.items);
                 console.log(`  🛒 ${items.length} item(ns) no pedido`);
 
-                // Desconta cada produto
-                for (const item of items) {
-                  const product = await db("products")
-                    .where({ id: item.id })
-                    .first();
-
-                  if (product && product.stock !== null) {
-                    const newStock = product.stock - item.quantity;
-                    const newReserved = Math.max(
-                      0,
-                      (product.stock_reserved || 0) - item.quantity,
+                // Desconta cada produto (pedido que desconta na entrega fica
+                // só reservado até ser entregue)
+                const updatedItems = order.deductOnDelivery
+                  ? items
+                  : await deductOrderStock(
+                      order,
+                      items,
+                      (item) => item.quantity,
                     );
-
-                    await db("products")
-                      .where({ id: item.id })
-                      .update({
-                        stock: newStock,
-                        stock_reserved: newReserved,
-                      });
-
-                    await logStockMovement({
-                      productId: item.id,
-                      productName: item.name,
-                      quantity: -item.quantity,
-                      type: "sale",
-                      orderId: externalRef,
-                      stockBefore: Number(product.stock) || 0,
-                      stockAfter: newStock,
-                    });
-
-                    console.log(
-                      `  ✅ ${item.name}: ${product.stock} → ${newStock} (${item.quantity} vendido)`,
-                    );
-                  } else if (product) {
-                    console.log(`  ℹ️ ${item.name}: estoque ilimitado`);
-                  }
-                }
 
                 // Atualiza o pedido para pago e ativo, salvando forma de pagamento
                 await db("orders")
@@ -3793,6 +3904,7 @@ app.post("/api/webhooks/mercadopago", async (req, res) => {
                     status: "active",
                     paymentType: "online",
                     paymentMethod: payment.payment_method_id || "unknown",
+                    items: JSON.stringify(updatedItems),
                   });
                 // Envia PDF por email para o cliente, se houver email
                 if (order.email) {
