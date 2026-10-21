@@ -183,6 +183,10 @@ const getItemStockDeducted = (order, item) => {
   return legacyDeducted ? Number(item.quantity) || 0 : 0;
 };
 
+// Pedido feito pelo admin não reserva estoque; liberar reserva dele tiraria
+// a reserva de outros pedidos.
+const isItemReserved = (item) => item?.reserved !== false;
+
 // Desconta do estoque a diferença entre `targetFor(item)` e o que o item já
 // teve descontado, liberando a mesma quantidade da reserva. Idempotente.
 // Retorna os itens com `stockDeducted` atualizado (o chamador salva no pedido).
@@ -200,7 +204,9 @@ async function deductOrderStock(order, items, targetFor, conn = db) {
         // Sem floor em 0: pedido liberado via PIN de balcão pode ficar
         // negativo de propósito.
         const newStock = product.stock - delta;
-        const newReserved = Math.max(0, (product.stock_reserved || 0) - delta);
+        const newReserved = isItemReserved(item)
+          ? Math.max(0, (product.stock_reserved || 0) - delta)
+          : product.stock_reserved || 0;
         await conn("products").where({ id: item.id }).update({
           stock: newStock,
           stock_reserved: newReserved,
@@ -1078,6 +1084,76 @@ app.post(
     } catch (e) {
       console.error("❌ Erro ao liberar estoque reservado:", e);
       res.status(500).json({ error: "Erro ao liberar estoque reservado" });
+    }
+  },
+);
+
+// Libera a reserva do que falta entregar de um pedido e marca os itens como
+// sem reserva, para a entrega depois baixar só o estoque (ver isItemReserved).
+app.post(
+  "/api/admin/orders/:id/release-reservation",
+  authenticateToken,
+  authorizeAdmin,
+  async (req, res) => {
+    try {
+      const result = await db.transaction(async (trx) => {
+        const order = await trx("orders").where({ id: req.params.id }).first();
+        if (!order) {
+          const notFound = new Error("Pedido não encontrado.");
+          notFound.status = 404;
+          throw notFound;
+        }
+
+        const released = [];
+        const updatedItems = [];
+        for (const item of parseJSON(order.items)) {
+          if (!isItemReserved(item)) {
+            updatedItems.push(item);
+            continue;
+          }
+
+          const quantity = Number(item.quantity) || 0;
+          const stillReserved = Math.max(
+            0,
+            quantity - Math.min(quantity, getItemStockDeducted(order, item)),
+          );
+          const product = await trx("products").where({ id: item.id }).first();
+
+          if (stillReserved > 0 && product && product.stock !== null) {
+            const currentReserved = Number(product.stock_reserved) || 0;
+            const newReserved = Math.max(0, currentReserved - stillReserved);
+            await trx("products")
+              .where({ id: item.id })
+              .update({ stock_reserved: newReserved });
+            released.push({
+              id: item.id,
+              name: item.name,
+              quantity: currentReserved - newReserved,
+              reservedBefore: currentReserved,
+              reservedAfter: newReserved,
+            });
+            console.log(
+              `🔓 [ADMIN] Reserva do pedido ${order.id} liberada: ${item.name} (${currentReserved} → ${newReserved})`,
+            );
+          }
+
+          updatedItems.push({ ...item, reserved: false });
+        }
+
+        await trx("orders")
+          .where({ id: order.id })
+          .update({ items: JSON.stringify(updatedItems) });
+
+        return { released, items: updatedItems };
+      });
+
+      res.json({ success: true, ...result });
+    } catch (e) {
+      if (e.status) {
+        return res.status(e.status).json({ success: false, message: e.message });
+      }
+      console.error("❌ Erro ao liberar reserva do pedido:", e);
+      res.status(500).json({ error: "Erro ao liberar reserva do pedido" });
     }
   },
 );
@@ -2775,8 +2851,8 @@ app.post("/api/orders", async (req, res) => {
     cashChangeValue = Number((received - orderTotal).toFixed(2));
   }
 
-  // Venda feita pelo admin (com token válido): o estoque fica reservado e só
-  // é descontado conforme os itens forem entregues.
+  // Venda feita pelo admin (com token válido): não reserva estoque; ele só é
+  // descontado conforme os itens forem entregues.
   const isAdminSale = Boolean(getAdminTokenPayload(req));
 
   try {
@@ -2827,7 +2903,7 @@ app.post("/api/orders", async (req, res) => {
           throw new Error(`Produto ${item.id} nao encontrado no estoque!`);
         }
 
-        if (product.stock !== null) {
+        if (product.stock !== null && !isAdminSale) {
           const currentStock = Number(product.stock) || 0;
           const currentReserved = Number(product.stock_reserved) || 0;
           const availableStock = Math.max(0, currentStock - currentReserved);
@@ -2878,6 +2954,8 @@ app.post("/api/orders", async (req, res) => {
             ...item,
             precoBruto:
               item.precoBruto !== undefined ? Number(item.precoBruto) : 0,
+            // Marca que o item não segura reserva (ver isItemReserved)
+            ...(isAdminSale ? { reserved: false } : {}),
           }))
         : [];
 
@@ -3227,8 +3305,9 @@ app.delete(
         status: order.status,
       });
 
-      // Se estava pendente, libera a reserva de estoque
-      if (order.paymentStatus === "pending") {
+      // Libera a reserva do que ainda não saiu do estoque. Pedido pago com
+      // desconto na entrega também segura reserva até ser entregue.
+      {
         console.log(
           `🔓 Liberando reserva de estoque do pedido ${req.params.id}...`,
         );
@@ -3237,11 +3316,22 @@ app.delete(
 
         for (const item of items) {
           const product = await db("products").where({ id: item.id }).first();
+          const quantity = Number(item.quantity) || 0;
+          const stillReserved = Math.max(
+            0,
+            quantity - Math.min(quantity, getItemStockDeducted(order, item)),
+          );
 
-          if (product && product.stock !== null && product.stock_reserved > 0) {
+          if (
+            stillReserved > 0 &&
+            isItemReserved(item) &&
+            product &&
+            product.stock !== null &&
+            product.stock_reserved > 0
+          ) {
             const newReserved = Math.max(
               0,
-              product.stock_reserved - item.quantity,
+              product.stock_reserved - stillReserved,
             );
 
             await db("products")
@@ -3341,10 +3431,9 @@ app.delete(
           );
 
           const nextStock = currentStock + deducted;
-          const nextReserved = Math.max(
-            0,
-            currentReserved - (quantity - deducted),
-          );
+          const nextReserved = isItemReserved(item)
+            ? Math.max(0, currentReserved - (quantity - deducted))
+            : currentReserved;
 
           await trx("products").where({ id: productId }).update({
             stock: nextStock,
@@ -3578,6 +3667,18 @@ app.post("/api/notifications/mercadopago", async (req, res) => {
               try {
                 const order = await db("orders").where({ id: orderId }).first();
                 if (order && order.paymentStatus === "pending") {
+                  // Sem isso a reserva nunca era liberada nem o estoque baixado
+                  const stockUpdates = order.deductOnDelivery
+                    ? {}
+                    : {
+                        items: JSON.stringify(
+                          await deductOrderStock(
+                            order,
+                            parseJSON(order.items),
+                            (item) => item.quantity,
+                          ),
+                        ),
+                      };
                   await db("orders")
                     .where({ id: orderId })
                     .update({
@@ -3585,6 +3686,7 @@ app.post("/api/notifications/mercadopago", async (req, res) => {
                       status: "preparing",
                       paymentType: "online",
                       paymentMethod: payment.payment_method_id || "unknown",
+                      ...stockUpdates,
                     });
                   console.log(
                     `✅ Pedido ${orderId} marcado como PAGO via IPN Card`,
@@ -3731,9 +3833,22 @@ app.post("/api/notifications/mercadopago", async (req, res) => {
           try {
             const order = await db("orders").where({ id: orderId }).first();
             if (order && order.paymentStatus === "pending") {
+              // Sem isso a reserva nunca era liberada nem o estoque baixado
+              const stockUpdates = order.deductOnDelivery
+                ? {}
+                : {
+                    items: JSON.stringify(
+                      await deductOrderStock(
+                        order,
+                        parseJSON(order.items),
+                        (item) => item.quantity,
+                      ),
+                    ),
+                  };
               await db("orders").where({ id: orderId }).update({
                 paymentStatus: "paid",
                 status: "preparing",
+                ...stockUpdates,
               });
               console.log(`✅ Pedido ${orderId} marcado como PAGO via IPN PIX`);
             }

@@ -127,7 +127,13 @@ const expireOrders = cron.schedule("*/10 * * * *", async () => {
         for (const item of items) {
           const product = await db("products").where({ id: item.id }).first();
 
-          if (product && product.stock !== null && product.stock_reserved > 0) {
+          // Item de pedido do admin não reservou nada
+          if (
+            item.reserved !== false &&
+            product &&
+            product.stock !== null &&
+            product.stock_reserved > 0
+          ) {
             const newReserved = Math.max(
               0,
               product.stock_reserved - item.quantity
