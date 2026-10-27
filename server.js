@@ -2688,6 +2688,13 @@ app.post("/api/users/register", async (req, res) => {
       });
     }
 
+    const emailInUse = await db("users")
+      .where({ email: String(email).trim() })
+      .first();
+    if (emailInUse) {
+      return res.status(409).json({ error: "Este email já está cadastrado" });
+    }
+
     // Cria novo usuário
     console.log(`📝 Cadastrando novo usuário: ${name} (${docClean})`);
 
@@ -2849,7 +2856,18 @@ app.post("/api/orders", async (req, res) => {
     installments,
     fee,
     cashReceived,
+    paymentSplits,
   } = req.body;
+
+  // Pagamento mesclado na loja: valida as formas contra o total do pedido
+  let mixedPayment = null;
+  if (Array.isArray(paymentSplits) && paymentSplits.length > 1) {
+    try {
+      mixedPayment = buildPaymentFields(paymentSplits, roundMoney(total) || 0);
+    } catch (err) {
+      return res.status(err.status || 400).json({ error: err.message });
+    }
+  }
 
   // Dinheiro: valida o valor recebido e calcula o troco no servidor
   let cashReceivedValue = null;
@@ -2991,6 +3009,16 @@ app.post("/api/orders", async (req, res) => {
         fee: fee || null,
         cashReceived: cashReceivedValue,
         cashChange: cashChangeValue,
+        ...(mixedPayment
+          ? {
+              paymentMethod: mixedPayment.paymentMethod,
+              paymentSplits: mixedPayment.paymentSplits,
+              installments: mixedPayment.installments,
+              fee: mixedPayment.fee,
+              cashReceived: mixedPayment.cashReceived,
+              cashChange: mixedPayment.cashChange,
+            }
+          : {}),
         deductOnDelivery: isAdminSale,
         created_at: new Date(),
       };
@@ -3191,7 +3219,7 @@ app.put("/api/orders/:id/mark-delivered", async (req, res) => {
   }
 });
 
-// Formas de pagamento aceitas na edição de pedido pelo admin
+// Formas de pagamento aceitas em pagamento mesclado / edição pelo admin
 const EDITABLE_PAYMENT_METHODS = [
   "credit",
   "debit",
@@ -3202,6 +3230,84 @@ const EDITABLE_PAYMENT_METHODS = [
 ];
 
 const roundMoney = (value) => Math.round(Number(value) * 100) / 100;
+
+const paymentError = (message) => {
+  const error = new Error(message);
+  error.status = 400;
+  return error;
+};
+
+// Valida as formas de pagamento (uma ou mais) contra o total do pedido e
+// devolve os campos a gravar no pedido. Cada forma:
+// { method, amount, installments?, cashReceived?, fee?, baseAmount? }
+// - amount: quanto é cobrado nessa forma (já com a taxa da maquininha)
+// - fee / baseAmount: taxa (%) e valor sem taxa, nas partes no cartão
+// Lança erro com status 400 quando algo não fecha.
+const buildPaymentFields = (rawSplits, orderTotal) => {
+  const splits = [];
+  for (const raw of rawSplits) {
+    const method = String(raw?.method || "").toLowerCase();
+    if (!EDITABLE_PAYMENT_METHODS.includes(method)) {
+      throw paymentError(`Forma de pagamento inválida: ${raw?.method}`);
+    }
+    const amount = roundMoney(raw?.amount);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      throw paymentError("Informe um valor maior que zero em cada forma");
+    }
+
+    const split = { method, amount };
+    if (method === "credit") {
+      split.installments = Math.max(1, parseInt(raw?.installments) || 1);
+    }
+    const fee = Number(raw?.fee);
+    if ((method === "credit" || method === "debit") && fee > 0) {
+      split.fee = fee;
+      const baseAmount = roundMoney(raw?.baseAmount);
+      if (Number.isFinite(baseAmount) && baseAmount > 0) {
+        split.baseAmount = baseAmount;
+      }
+    }
+    if (
+      method === "cash" &&
+      raw?.cashReceived !== undefined &&
+      raw?.cashReceived !== null &&
+      raw?.cashReceived !== ""
+    ) {
+      const received = roundMoney(raw.cashReceived);
+      if (!Number.isFinite(received) || received < amount) {
+        throw paymentError(
+          "Valor recebido em dinheiro menor que o valor em dinheiro",
+        );
+      }
+      split.cashReceived = received;
+      split.cashChange = roundMoney(received - amount);
+    }
+    splits.push(split);
+  }
+
+  const splitsTotal = roundMoney(
+    splits.reduce((sum, split) => sum + split.amount, 0),
+  );
+  if (Math.abs(splitsTotal - orderTotal) > 0.009) {
+    throw paymentError(
+      `A soma das formas de pagamento (R$ ${splitsTotal.toFixed(2)}) precisa ser igual ao total do pedido (R$ ${orderTotal.toFixed(2)})`,
+    );
+  }
+
+  const isMixed = splits.length > 1;
+  const creditSplit = splits.find((split) => split.method === "credit");
+  const cashSplit = splits.find((split) => split.method === "cash");
+
+  return {
+    paymentMethod: isMixed ? "mixed" : splits[0].method,
+    paymentSplits: isMixed ? JSON.stringify(splits) : null,
+    installments: creditSplit ? creditSplit.installments : 1,
+    // Taxa (%) do crédito; sem crédito não há taxa de parcelamento
+    fee: creditSplit ? (creditSplit.fee ?? null) : 0,
+    cashReceived: cashSplit?.cashReceived ?? null,
+    cashChange: cashSplit?.cashChange ?? null,
+  };
+};
 
 // Edita um pedido já finalizado (apenas admin): troca o cliente e/ou a forma
 // de pagamento. Body:
@@ -3251,64 +3357,24 @@ app.put(
               },
             ];
 
-        const splits = [];
-        for (const raw of rawSplits) {
-          const method = String(raw?.method || "").toLowerCase();
-          if (!EDITABLE_PAYMENT_METHODS.includes(method)) {
-            return res
-              .status(400)
-              .json({ error: `Forma de pagamento inválida: ${raw?.method}` });
+        let fields;
+        try {
+          fields = buildPaymentFields(rawSplits, orderTotal);
+        } catch (err) {
+          if (err.status) {
+            return res.status(err.status).json({ error: err.message });
           }
-          const amount = roundMoney(raw?.amount);
-          if (!Number.isFinite(amount) || amount <= 0) {
-            return res
-              .status(400)
-              .json({ error: "Informe um valor maior que zero em cada forma" });
-          }
-
-          const split = { method, amount };
-          if (method === "credit") {
-            split.installments = Math.max(1, parseInt(raw?.installments) || 1);
-          }
-          if (
-            method === "cash" &&
-            raw?.cashReceived !== undefined &&
-            raw?.cashReceived !== null &&
-            raw?.cashReceived !== ""
-          ) {
-            const received = roundMoney(raw.cashReceived);
-            if (!Number.isFinite(received) || received < amount) {
-              return res.status(400).json({
-                error: "Valor recebido em dinheiro menor que o valor em dinheiro",
-              });
-            }
-            split.cashReceived = received;
-            split.cashChange = roundMoney(received - amount);
-          }
-          splits.push(split);
+          throw err;
         }
-
-        const splitsTotal = roundMoney(
-          splits.reduce((sum, split) => sum + split.amount, 0),
-        );
-        if (Math.abs(splitsTotal - orderTotal) > 0.009) {
-          return res.status(400).json({
-            error: `A soma das formas de pagamento (R$ ${splitsTotal.toFixed(2)}) precisa ser igual ao total do pedido (R$ ${orderTotal.toFixed(2)})`,
-          });
-        }
-
-        const isMixed = splits.length > 1;
-        const creditSplit = splits.find((split) => split.method === "credit");
-        const cashSplit = splits.find((split) => split.method === "cash");
 
         updates.paymentType = "presencial";
-        updates.paymentMethod = isMixed ? "mixed" : splits[0].method;
-        updates.paymentSplits = isMixed ? JSON.stringify(splits) : null;
-        updates.installments = creditSplit ? creditSplit.installments : 1;
-        // Sem crédito não há taxa de parcelamento
-        if (!creditSplit) updates.fee = 0;
-        updates.cashReceived = cashSplit?.cashReceived ?? null;
-        updates.cashChange = cashSplit?.cashChange ?? null;
+        updates.paymentMethod = fields.paymentMethod;
+        updates.paymentSplits = fields.paymentSplits;
+        updates.installments = fields.installments;
+        // Mantém a taxa já gravada quando o crédito continua sem taxa informada
+        if (fields.fee !== null) updates.fee = fields.fee;
+        updates.cashReceived = fields.cashReceived;
+        updates.cashChange = fields.cashChange;
       }
 
       if (Object.keys(updates).length === 0) {
