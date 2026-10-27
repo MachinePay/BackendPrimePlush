@@ -141,17 +141,19 @@ export function generateStyledOrderPdf(order, res) {
       order.paymentInstallments ||
       1;
 
-    let tipoDesc = "";
-    if (typeof tipoPagamento === "string") {
-      const tipo = tipoPagamento.toLowerCase();
-      if (tipo.includes("pix")) tipoDesc = "PIX";
-      else if (tipo.includes("debit")) tipoDesc = "Cartão Débito";
-      else if (tipo.includes("credit")) tipoDesc = "Cartão Crédito";
-      else if (tipo === "cash" || tipo === "dinheiro") tipoDesc = "Dinheiro";
-      else if (tipo === "cheque") tipoDesc = "Cheque";
-      else if (tipo === "boleto") tipoDesc = "Boleto";
-      else tipoDesc = tipoPagamento;
-    }
+    const describeMethod = (method) => {
+      if (typeof method !== "string") return "";
+      const tipo = method.toLowerCase();
+      if (tipo.includes("pix")) return "PIX";
+      if (tipo.includes("debit")) return "Cartão Débito";
+      if (tipo.includes("credit")) return "Cartão Crédito";
+      if (tipo === "cash" || tipo === "dinheiro") return "Dinheiro";
+      if (tipo === "cheque") return "Cheque";
+      if (tipo === "boleto") return "Boleto";
+      if (tipo === "mixed") return "Misto";
+      return method;
+    };
+    const tipoDesc = describeMethod(tipoPagamento);
 
     const tipoText = `Tipo: ${tipoDesc}`;
     doc.fontSize(11).font("Helvetica").text(tipoText, rightX, rightCurrentY, {
@@ -159,7 +161,32 @@ export function generateStyledOrderPdf(order, res) {
     });
     rightCurrentY += doc.heightOfString(tipoText, { width: rightWidth }) + 4;
 
-    if (vezes > 1) {
+    // Pagamento mesclado: uma linha por forma de pagamento
+    let splits = order.paymentSplits;
+    if (typeof splits === "string") {
+      try {
+        splits = JSON.parse(splits);
+      } catch {
+        splits = [];
+      }
+    }
+    if (Array.isArray(splits)) {
+      splits.forEach((split) => {
+        let line = `${describeMethod(split.method)}: R$ ${Number(split.amount || 0).toFixed(2)}`;
+        if (split.method === "credit" && Number(split.installments) > 1) {
+          line += ` (${split.installments}x)`;
+        }
+        if (split.cashReceived !== undefined && split.cashReceived !== null) {
+          line += ` - recebido R$ ${Number(split.cashReceived).toFixed(2)}, troco R$ ${Number(split.cashChange || 0).toFixed(2)}`;
+        }
+        doc.fontSize(11).font("Helvetica").text(line, rightX, rightCurrentY, {
+          width: rightWidth,
+        });
+        rightCurrentY += doc.heightOfString(line, { width: rightWidth }) + 4;
+      });
+    }
+
+    if (vezes > 1 && tipoDesc !== "Misto") {
       const parceladoText = `Parcelado: ${vezes}x`;
       doc
         .fontSize(11)

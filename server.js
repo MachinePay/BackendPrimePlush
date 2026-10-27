@@ -371,6 +371,8 @@ async function initDatabase() {
     { name: "entregueCliente", type: "boolean" },
     // Venda feita pelo admin: o estoque só é descontado conforme a entrega
     { name: "deductOnDelivery", type: "boolean" },
+    // Pagamento mesclado: JSON [{ method, amount, installments?, cashReceived?, cashChange? }]
+    { name: "paymentSplits", type: "text" },
   ];
   for (const col of paymentCols) {
     const hasCol = await db.schema.hasColumn("orders", col.name);
@@ -380,6 +382,7 @@ async function initDatabase() {
         if (col.type === "integer") table.integer(col.name);
         if (col.type === "decimal") table.decimal(col.name, 8, 2);
         if (col.type === "boolean") table.boolean(col.name).defaultTo(false);
+        if (col.type === "text") table.text(col.name);
       });
       console.log(`✅ Coluna '${col.name}' adicionada à tabela orders`);
     }
@@ -1401,6 +1404,7 @@ app.get(
               "total",
               "timestamp",
               "paymentMethod",
+              "paymentSplits",
               "paymentStatus",
               "status",
               "paymentType",
@@ -1563,20 +1567,31 @@ app.get(
 
         const orderDate = new Date(order.timestamp);
         const orderRevenue = parseFloat(order.total) || 0;
-        const paymentMethod = normalizePaymentMethod(order.paymentMethod);
+        // Pagamento mesclado: cada forma recebe a sua parte do valor
+        const parsedSplits = parseJSON(order.paymentSplits);
+        const paymentParts =
+          Array.isArray(parsedSplits) && parsedSplits.length > 0
+            ? parsedSplits.map((split) => ({
+                method: split.method,
+                amount: Number(split.amount) || 0,
+              }))
+            : [{ method: order.paymentMethod, amount: orderRevenue }];
 
-        const paymentDistribution = paymentDistributionMap.get(
-          paymentMethod.key,
-        ) || {
-          method: paymentMethod.key,
-          name: paymentMethod.label,
-          orders: 0,
-          revenue: 0,
-        };
+        paymentParts.forEach((part) => {
+          const paymentMethod = normalizePaymentMethod(part.method);
+          const paymentDistribution = paymentDistributionMap.get(
+            paymentMethod.key,
+          ) || {
+            method: paymentMethod.key,
+            name: paymentMethod.label,
+            orders: 0,
+            revenue: 0,
+          };
 
-        paymentDistribution.orders += 1;
-        paymentDistribution.revenue += orderRevenue;
-        paymentDistributionMap.set(paymentMethod.key, paymentDistribution);
+          paymentDistribution.orders += 1;
+          paymentDistribution.revenue += part.amount;
+          paymentDistributionMap.set(paymentMethod.key, paymentDistribution);
+        });
 
         if (!Number.isNaN(orderDate.getTime())) {
           const dailyKey = formatDateKey(orderDate);
@@ -3176,6 +3191,147 @@ app.put("/api/orders/:id/mark-delivered", async (req, res) => {
   }
 });
 
+// Formas de pagamento aceitas na edição de pedido pelo admin
+const EDITABLE_PAYMENT_METHODS = [
+  "credit",
+  "debit",
+  "pix",
+  "cash",
+  "cheque",
+  "boleto",
+];
+
+const roundMoney = (value) => Math.round(Number(value) * 100) / 100;
+
+// Edita um pedido já finalizado (apenas admin): troca o cliente e/ou a forma
+// de pagamento. Body:
+// - userId: novo cliente do pedido
+// - paymentMethod (+ installments / cashReceived): uma única forma
+// - paymentSplits: [{ method, amount, installments?, cashReceived? }] para
+//   mesclar formas; a soma dos valores precisa fechar com o total do pedido.
+// Total, itens, estoque e status de pagamento não são alterados.
+app.put(
+  "/api/admin/orders/:id",
+  authenticateToken,
+  authorizeAdmin,
+  async (req, res) => {
+    const { id } = req.params;
+    const { userId, paymentMethod, installments, cashReceived, paymentSplits } =
+      req.body || {};
+
+    try {
+      const order = await db("orders").where({ id }).first();
+      if (!order) {
+        return res.status(404).json({ error: "Pedido não encontrado" });
+      }
+
+      const updates = {};
+
+      if (userId !== undefined && userId !== order.userId) {
+        const user = await db("users").where({ id: userId }).first();
+        if (!user) {
+          return res.status(400).json({ error: "Cliente não encontrado" });
+        }
+        updates.userId = user.id;
+        updates.userName = user.name || "Cliente";
+      }
+
+      const orderTotal = roundMoney(order.total) || 0;
+      const hasSplits = Array.isArray(paymentSplits) && paymentSplits.length > 0;
+
+      if (hasSplits || paymentMethod !== undefined) {
+        const rawSplits = hasSplits
+          ? paymentSplits
+          : [
+              {
+                method: paymentMethod,
+                amount: orderTotal,
+                installments,
+                cashReceived,
+              },
+            ];
+
+        const splits = [];
+        for (const raw of rawSplits) {
+          const method = String(raw?.method || "").toLowerCase();
+          if (!EDITABLE_PAYMENT_METHODS.includes(method)) {
+            return res
+              .status(400)
+              .json({ error: `Forma de pagamento inválida: ${raw?.method}` });
+          }
+          const amount = roundMoney(raw?.amount);
+          if (!Number.isFinite(amount) || amount <= 0) {
+            return res
+              .status(400)
+              .json({ error: "Informe um valor maior que zero em cada forma" });
+          }
+
+          const split = { method, amount };
+          if (method === "credit") {
+            split.installments = Math.max(1, parseInt(raw?.installments) || 1);
+          }
+          if (
+            method === "cash" &&
+            raw?.cashReceived !== undefined &&
+            raw?.cashReceived !== null &&
+            raw?.cashReceived !== ""
+          ) {
+            const received = roundMoney(raw.cashReceived);
+            if (!Number.isFinite(received) || received < amount) {
+              return res.status(400).json({
+                error: "Valor recebido em dinheiro menor que o valor em dinheiro",
+              });
+            }
+            split.cashReceived = received;
+            split.cashChange = roundMoney(received - amount);
+          }
+          splits.push(split);
+        }
+
+        const splitsTotal = roundMoney(
+          splits.reduce((sum, split) => sum + split.amount, 0),
+        );
+        if (Math.abs(splitsTotal - orderTotal) > 0.009) {
+          return res.status(400).json({
+            error: `A soma das formas de pagamento (R$ ${splitsTotal.toFixed(2)}) precisa ser igual ao total do pedido (R$ ${orderTotal.toFixed(2)})`,
+          });
+        }
+
+        const isMixed = splits.length > 1;
+        const creditSplit = splits.find((split) => split.method === "credit");
+        const cashSplit = splits.find((split) => split.method === "cash");
+
+        updates.paymentType = "presencial";
+        updates.paymentMethod = isMixed ? "mixed" : splits[0].method;
+        updates.paymentSplits = isMixed ? JSON.stringify(splits) : null;
+        updates.installments = creditSplit ? creditSplit.installments : 1;
+        // Sem crédito não há taxa de parcelamento
+        if (!creditSplit) updates.fee = 0;
+        updates.cashReceived = cashSplit?.cashReceived ?? null;
+        updates.cashChange = cashSplit?.cashChange ?? null;
+      }
+
+      if (Object.keys(updates).length === 0) {
+        return res.status(400).json({ error: "Nada para alterar" });
+      }
+
+      await db("orders").where({ id }).update(updates);
+      const updated = await db("orders").where({ id }).first();
+      console.log(`✏️ Pedido ${id} editado pelo admin:`, Object.keys(updates));
+
+      res.json({
+        ...updated,
+        items: parseJSON(updated.items),
+        paymentSplits: parseJSON(updated.paymentSplits),
+        total: parseFloat(updated.total),
+      });
+    } catch (e) {
+      console.error("❌ Erro ao editar pedido:", e);
+      res.status(500).json({ error: "Erro ao editar pedido" });
+    }
+  },
+);
+
 app.put("/api/orders/:id", async (req, res) => {
   const { id } = req.params;
   let { paymentId, paymentStatus } = req.body;
@@ -3516,6 +3672,7 @@ app.get("/api/orders/history", async (req, res) => {
     const parsedOrders = orders.map((o) => ({
       ...o,
       items: typeof o.items === "string" ? JSON.parse(o.items) : o.items,
+      paymentSplits: parseJSON(o.paymentSplits),
       total: parseFloat(o.total),
       paymentMethod:
         o.paymentMethod ||
