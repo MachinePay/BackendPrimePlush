@@ -172,10 +172,13 @@ async function logStockMovement({
 
 // Quanto do item já saiu do estoque real. Pedidos antigos não guardam
 // `stockDeducted`: nesses, pago ou entregue significa tudo descontado.
+// Pedido com deductOnDelivery nunca desconta no pagamento: sem
+// `stockDeducted`, nada saiu (antes caía no legado e a entrega não baixava).
 const getItemStockDeducted = (order, item) => {
   if (item.stockDeducted !== undefined && item.stockDeducted !== null) {
     return Number(item.stockDeducted) || 0;
   }
+  if (order.deductOnDelivery) return 0;
   const legacyDeducted =
     order.entregueCliente == 1 ||
     order.paymentStatus === "paid" ||
@@ -202,27 +205,31 @@ async function deductOrderStock(order, items, targetFor, conn = db) {
       const product = await conn("products").where({ id: item.id }).first();
       if (product && product.stock !== null) {
         // Sem floor em 0: pedido liberado via PIN de balcão pode ficar
-        // negativo de propósito.
-        const newStock = product.stock - delta;
+        // negativo de propósito. Decremento atômico: duas vendas ao mesmo
+        // tempo não podem sobrescrever uma à outra.
+        await conn("products").where({ id: item.id }).decrement("stock", delta);
         const newReserved = isItemReserved(item)
           ? Math.max(0, (product.stock_reserved || 0) - delta)
           : product.stock_reserved || 0;
-        await conn("products").where({ id: item.id }).update({
-          stock: newStock,
-          stock_reserved: newReserved,
-        });
+        if (newReserved !== (product.stock_reserved || 0)) {
+          await conn("products")
+            .where({ id: item.id })
+            .update({ stock_reserved: newReserved });
+        }
+        const after = await conn("products").where({ id: item.id }).first();
+        const newStock = Number(after?.stock) || 0;
         await logStockMovement({
           productId: item.id,
           productName: item.name,
           quantity: -delta,
           type: "sale",
           orderId: order.id,
-          stockBefore: Number(product.stock) || 0,
+          stockBefore: newStock + delta,
           stockAfter: newStock,
           conn,
         });
         console.log(
-          `  ✅ ${item.name}: ${product.stock} → ${newStock} (-${delta}), reserva: ${product.stock_reserved} → ${newReserved}`,
+          `  ✅ ${item.name}: ${newStock + delta} → ${newStock} (-${delta}), reserva: ${product.stock_reserved} → ${newReserved}`,
         );
       }
     }
@@ -2125,9 +2132,16 @@ app.put(
       videoUrl,
       popular,
       stock,
+      stockDelta,
       minStock,
       active,
     } = req.body;
+    // stockDelta soma/subtrai do estoque atual no banco. Preferível a `stock`
+    // absoluto, que vindo de uma tela aberta há tempo apaga vendas no meio.
+    const delta =
+      stockDelta !== undefined && stockDelta !== null
+        ? parseInt(stockDelta)
+        : 0;
 
     try {
       // MULTI-TENANCY: Busca produto apenas da loja específica
@@ -2165,11 +2179,33 @@ app.put(
 
       if (req.body.quantidadeVenda !== undefined)
         updates.quantidadeVenda = parseInt(req.body.quantidadeVenda);
+      const applyDelta =
+        Number.isFinite(delta) && delta !== 0 && stock === undefined;
+      if (applyDelta && exists.stock === null) {
+        return res
+          .status(400)
+          .json({ error: "Produto com estoque ilimitado não aceita ajuste." });
+      }
       // Só atualiza se houver campos para atualizar
-      if (Object.keys(updates).length === 0) {
+      if (Object.keys(updates).length === 0 && !applyDelta) {
         return res.status(400).json({ error: "Nenhum campo para atualizar." });
       }
-      await db("products").where({ id }).update(updates);
+      if (Object.keys(updates).length > 0) {
+        await db("products").where({ id }).update(updates);
+      }
+
+      if (applyDelta) {
+        await db("products").where({ id }).increment("stock", delta);
+        const after = await db("products").where({ id }).first();
+        await logStockMovement({
+          productId: id,
+          productName: exists.name,
+          quantity: delta,
+          type: "manual",
+          stockBefore: Number(after.stock) - delta,
+          stockAfter: Number(after.stock),
+        });
+      }
 
       // Registra movimentação manual de estoque se o campo stock foi alterado
       if (stock !== undefined && exists.stock !== null) {
@@ -2884,9 +2920,10 @@ app.post("/api/orders", async (req, res) => {
     cashChangeValue = Number((received - orderTotal).toFixed(2));
   }
 
-  // Venda feita pelo admin (com token válido): não reserva estoque; ele só é
-  // descontado conforme os itens forem entregues.
+  // Venda feita pelo admin (com token válido): pode passar do estoque (o
+  // carrinho avisa). Como todo pedido, reserva e só desconta na entrega.
   const isAdminSale = Boolean(getAdminTokenPayload(req));
+  const orderId = `order_${Date.now()}`;
 
   try {
     // Iniciamos uma transação para garantir integridade dos dados
@@ -2936,7 +2973,10 @@ app.post("/api/orders", async (req, res) => {
           throw new Error(`Produto ${item.id} nao encontrado no estoque!`);
         }
 
-        if (product.stock !== null && !isAdminSale) {
+        // Admin também reserva: o disponível (estoque - reservado) precisa
+        // contar tudo que foi vendido e ainda não entregue, senão o aviso de
+        // falta de estoque não dispara.
+        if (product.stock !== null) {
           const currentStock = Number(product.stock) || 0;
           const currentReserved = Number(product.stock_reserved) || 0;
           const availableStock = Math.max(0, currentStock - currentReserved);
@@ -2958,7 +2998,7 @@ app.post("/api/orders", async (req, res) => {
               productName: item.name,
               quantity: item.quantity,
               type: "override_reserve",
-              orderId: null,
+              orderId,
               stockBefore: currentStock,
               stockAfter: currentStock,
               conn: trx,
@@ -2987,13 +3027,11 @@ app.post("/api/orders", async (req, res) => {
             ...item,
             precoBruto:
               item.precoBruto !== undefined ? Number(item.precoBruto) : 0,
-            // Marca que o item não segura reserva (ver isItemReserved)
-            ...(isAdminSale ? { reserved: false } : {}),
           }))
         : [];
 
       const newOrder = {
-        id: `order_${Date.now()}`,
+        id: orderId,
         userId: userId,
         userName: userName || "Cliente",
         total: total,
@@ -3019,7 +3057,8 @@ app.post("/api/orders", async (req, res) => {
               cashChange: mixedPayment.cashChange,
             }
           : {}),
-        deductOnDelivery: isAdminSale,
+        // Todo pedido só sai do estoque na entrega; pagar não desconta
+        deductOnDelivery: true,
         created_at: new Date(),
       };
 
@@ -3069,38 +3108,33 @@ app.get("/api/users/:userId/orders", async (req, res) => {
 app.put("/api/orders/:id/mark-paid", async (req, res) => {
   const { id } = req.params;
   try {
-    const order = await db("orders").where({ id }).first();
-    if (!order) {
+    // Transação com o pedido travado: clique duplo não desconta duas vezes
+    const found = await db.transaction(async (trx) => {
+      const order = await trx("orders").where({ id }).forUpdate().first();
+      if (!order) return false;
+
+      const items = parseJSON(order.items);
+      const updates = { paymentStatus: "paid" };
+      // Pedido que desconta na entrega: pagar não mexe no estoque.
+      if (order.deductOnDelivery) {
+        console.log(`ℹ️ [mark-paid] Estoque segue a entrega. Pulando dedução.`);
+      } else {
+        // Desconta só o que ainda não saiu (ex.: já descontado na entrega)
+        const updatedItems = await deductOrderStock(
+          order,
+          items,
+          (item) => item.quantity,
+          trx,
+        );
+        updates.items = JSON.stringify(updatedItems);
+      }
+
+      await trx("orders").where({ id }).update(updates);
+      return true;
+    });
+    if (!found) {
       return res.status(404).json({ error: "Pedido não encontrado" });
     }
-
-    // Parse items from order
-    let items = [];
-    try {
-      items =
-        typeof order.items === "string" ? JSON.parse(order.items) : order.items;
-    } catch (err) {
-      console.error("❌ Erro ao parsear itens do pedido:", err);
-      return res
-        .status(500)
-        .json({ error: "Erro ao processar itens do pedido" });
-    }
-
-    const updates = { paymentStatus: "paid" };
-    // Pedido que desconta na entrega: pagar não mexe no estoque.
-    if (order.deductOnDelivery) {
-      console.log(`ℹ️ [mark-paid] Estoque segue a entrega. Pulando dedução.`);
-    } else {
-      // Desconta só o que ainda não saiu (ex.: já descontado na entrega)
-      const updatedItems = await deductOrderStock(
-        order,
-        items,
-        (item) => item.quantity,
-      );
-      updates.items = JSON.stringify(updatedItems);
-    }
-
-    await db("orders").where({ id }).update(updates);
     res.json({
       success: true,
       message: "Pedido marcado como pago e estoque atualizado",
@@ -3129,7 +3163,7 @@ app.put("/api/orders/:id/mark-delivered", async (req, res) => {
 
   try {
     const result = await db.transaction(async (trx) => {
-      const order = await trx("orders").where({ id }).first();
+      const order = await trx("orders").where({ id }).forUpdate().first();
       if (!order) {
         const notFound = new Error("Pedido não encontrado.");
         notFound.status = 404;
