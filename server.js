@@ -965,7 +965,7 @@ app.get("/api/menu", async (req, res) => {
         const stockAvailable =
           p.stock === null
             ? null // ilimitado
-            : Math.max(0, p.stock - (p.stock_reserved || 0)); // disponível = total - reservado
+            : Math.max(0, p.stock); // reserva não bloqueia: cliente pode pedir item reservado
 
         return {
           ...p,
@@ -2978,8 +2978,8 @@ app.post("/api/orders", async (req, res) => {
         // falta de estoque não dispara.
         if (product.stock !== null) {
           const currentStock = Number(product.stock) || 0;
-          const currentReserved = Number(product.stock_reserved) || 0;
-          const availableStock = Math.max(0, currentStock - currentReserved);
+          // Reserva não bloqueia novos pedidos: só o estoque físico conta.
+          const availableStock = Math.max(0, currentStock);
 
           if (availableStock < item.quantity && !item.forceOverride) {
             throw new Error(
@@ -3008,9 +3008,7 @@ app.post("/api/orders", async (req, res) => {
 
           const reserved = await trx("products")
             .where({ id: item.id })
-            .whereRaw("(stock - COALESCE(stock_reserved, 0)) >= ?", [
-              item.quantity,
-            ])
+            .where("stock", ">=", item.quantity)
             .increment("stock_reserved", item.quantity);
 
           if (!reserved) {
