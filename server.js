@@ -143,6 +143,21 @@ const parseJSON = (data) => {
   return data || [];
 };
 
+// Links de vídeo do produto: lista limpa, sem vazios
+const normalizeVideoList = (videos) =>
+  Array.isArray(videos)
+    ? videos
+        .map((url) => (typeof url === "string" ? url.trim() : ""))
+        .filter((url) => !!url)
+    : [];
+
+// Vídeos salvos no produto (coluna videos) ou o videoUrl antigo
+const getProductVideos = (product) => {
+  const parsed = normalizeVideoList(parseJSON(product.videos));
+  if (parsed.length > 0) return parsed;
+  return product.videoUrl ? [product.videoUrl] : [];
+};
+
 // Helper para registrar movimentações de estoque no banco
 async function logStockMovement({
   productId,
@@ -433,6 +448,7 @@ async function initDatabase() {
       table.string("videoUrl");
       table.string("imageUrl"); // URL da imagem do produto
       table.text("images"); // Lista de URLs das imagens (JSON)
+      table.text("videos"); // Lista de links de vídeos do YouTube (JSON)
       table.boolean("popular").defaultTo(false);
       table.integer("stock"); // NULL = estoque ilimitado, 0 = esgotado
       table.integer("stock_reserved").defaultTo(0); // Estoque reservado temporariamente
@@ -501,6 +517,13 @@ async function initDatabase() {
         table.text("images");
       });
       console.log("✅ Coluna images adicionada à tabela products");
+    }
+    const hasVideos = await db.schema.hasColumn("products", "videos");
+    if (!hasVideos) {
+      await db.schema.table("products", (table) => {
+        table.text("videos");
+      });
+      console.log("✅ Coluna videos adicionada à tabela products");
     }
   }
 
@@ -973,6 +996,7 @@ app.get("/api/menu", async (req, res) => {
           priceRaw: p.priceRaw !== undefined ? parseFloat(p.priceRaw) : 0,
           imageUrl: normalizedImages[0] || p.imageUrl || null,
           images: normalizedImages,
+          videos: getProductVideos(p),
           stock: p.stock,
           stock_reserved: p.stock_reserved || 0,
           stock_available: stockAvailable,
@@ -2039,6 +2063,7 @@ app.get(
             ...p,
             imageUrl: normalizedImages[0] || p.imageUrl || null,
             images: normalizedImages,
+            videos: getProductVideos(p),
           };
         }),
       );
@@ -2063,6 +2088,7 @@ app.post(
       imageUrl,
       images,
       videoUrl,
+      videos,
       popular,
       stock,
       minStock,
@@ -2093,7 +2119,8 @@ app.post(
         images: JSON.stringify(
           normalizedImages.length > 0 ? normalizedImages : [primaryImage],
         ),
-        videoUrl: videoUrl || "",
+        videos: JSON.stringify(normalizeVideoList(videos)),
+        videoUrl: normalizeVideoList(videos)[0] || videoUrl || "",
         popular: popular || false,
         stock: stock !== undefined ? parseInt(stock) : null, // null = ilimitado
         minStock: minStock !== undefined ? parseInt(minStock) : 0,
@@ -2107,6 +2134,7 @@ app.post(
       res.status(201).json({
         ...newProduct,
         images: parseJSON(newProduct.images),
+        videos: getProductVideos(newProduct),
         isAvailable: newProduct.stock === null || newProduct.stock > 0,
       });
     } catch (e) {
@@ -2130,6 +2158,7 @@ app.put(
       imageUrl,
       images,
       videoUrl,
+      videos,
       popular,
       stock,
       stockDelta,
@@ -2170,6 +2199,11 @@ app.put(
         updates.imageUrl = normalizedImages[0] || imageUrl || "";
       }
       if (videoUrl !== undefined) updates.videoUrl = videoUrl;
+      if (videos !== undefined) {
+        const normalizedVideos = normalizeVideoList(videos);
+        updates.videos = JSON.stringify(normalizedVideos);
+        updates.videoUrl = normalizedVideos[0] || "";
+      }
       if (popular !== undefined) updates.popular = popular;
       if (stock !== undefined)
         updates.stock = stock === null ? null : parseInt(stock);
@@ -2233,6 +2267,7 @@ app.put(
           }
           return updated.imageUrl ? [updated.imageUrl] : [];
         })(),
+        videos: getProductVideos(updated),
         price: parseFloat(updated.price),
         isAvailable: updated.stock === null || updated.stock > 0,
       });
