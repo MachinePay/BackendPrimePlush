@@ -158,6 +158,37 @@ const getProductVideos = (product) => {
   return product.videoUrl ? [product.videoUrl] : [];
 };
 
+// Ordem do carrossel do produto: [{ type: "image" | "video", url }]
+const normalizeMediaList = (media) =>
+  Array.isArray(media)
+    ? media
+        .map((item) => ({
+          type: item?.type === "video" ? "video" : "image",
+          url: typeof item?.url === "string" ? item.url.trim() : "",
+        }))
+        .filter((item) => !!item.url)
+    : [];
+
+// Mídias na ordem salva; produtos antigos: fotos primeiro, depois vídeos
+const getProductMedia = (product, images) => {
+  const parsed = normalizeMediaList(parseJSON(product.media));
+  if (parsed.length > 0) return parsed;
+  return [
+    ...images.map((url) => ({ type: "image", url })),
+    ...getProductVideos(product).map((url) => ({ type: "video", url })),
+  ];
+};
+
+// Quando o admin manda a lista ordenada (media), as listas de imagens e de
+// vídeos saem dela, na mesma ordem.
+const applyMediaToProductBody = (body) => {
+  if (!Array.isArray(body?.media)) return;
+  const media = normalizeMediaList(body.media);
+  body.media = media;
+  body.images = media.filter((m) => m.type === "image").map((m) => m.url);
+  body.videos = media.filter((m) => m.type === "video").map((m) => m.url);
+};
+
 // Helper para registrar movimentações de estoque no banco
 async function logStockMovement({
   productId,
@@ -449,6 +480,7 @@ async function initDatabase() {
       table.string("imageUrl"); // URL da imagem do produto
       table.text("images"); // Lista de URLs das imagens (JSON)
       table.text("videos"); // Lista de links de vídeos do YouTube (JSON)
+      table.text("media"); // Ordem do carrossel: fotos e vídeos (JSON)
       table.boolean("popular").defaultTo(false);
       table.integer("stock"); // NULL = estoque ilimitado, 0 = esgotado
       table.integer("stock_reserved").defaultTo(0); // Estoque reservado temporariamente
@@ -524,6 +556,13 @@ async function initDatabase() {
         table.text("videos");
       });
       console.log("✅ Coluna videos adicionada à tabela products");
+    }
+    const hasMedia = await db.schema.hasColumn("products", "media");
+    if (!hasMedia) {
+      await db.schema.table("products", (table) => {
+        table.text("media");
+      });
+      console.log("✅ Coluna media adicionada à tabela products");
     }
   }
 
@@ -997,6 +1036,7 @@ app.get("/api/menu", async (req, res) => {
           imageUrl: normalizedImages[0] || p.imageUrl || null,
           images: normalizedImages,
           videos: getProductVideos(p),
+          media: getProductMedia(p, normalizedImages),
           stock: p.stock,
           stock_reserved: p.stock_reserved || 0,
           stock_available: stockAvailable,
@@ -2064,6 +2104,7 @@ app.get(
             imageUrl: normalizedImages[0] || p.imageUrl || null,
             images: normalizedImages,
             videos: getProductVideos(p),
+            media: getProductMedia(p, normalizedImages),
           };
         }),
       );
@@ -2079,6 +2120,7 @@ app.post(
   authenticateToken,
   authorizeAdmin,
   async (req, res) => {
+    applyMediaToProductBody(req.body);
     const {
       id,
       name,
@@ -2089,6 +2131,7 @@ app.post(
       images,
       videoUrl,
       videos,
+      media,
       popular,
       stock,
       minStock,
@@ -2120,6 +2163,7 @@ app.post(
           normalizedImages.length > 0 ? normalizedImages : [primaryImage],
         ),
         videos: JSON.stringify(normalizeVideoList(videos)),
+        media: media ? JSON.stringify(media) : null,
         videoUrl: normalizeVideoList(videos)[0] || videoUrl || "",
         popular: popular || false,
         stock: stock !== undefined ? parseInt(stock) : null, // null = ilimitado
@@ -2135,6 +2179,7 @@ app.post(
         ...newProduct,
         images: parseJSON(newProduct.images),
         videos: getProductVideos(newProduct),
+        media: getProductMedia(newProduct, parseJSON(newProduct.images)),
         isAvailable: newProduct.stock === null || newProduct.stock > 0,
       });
     } catch (e) {
@@ -2150,6 +2195,7 @@ app.put(
   authorizeAdmin,
   async (req, res) => {
     const { id } = req.params;
+    applyMediaToProductBody(req.body);
     const {
       name,
       price,
@@ -2159,6 +2205,7 @@ app.put(
       images,
       videoUrl,
       videos,
+      media,
       popular,
       stock,
       stockDelta,
@@ -2203,6 +2250,12 @@ app.put(
         const normalizedVideos = normalizeVideoList(videos);
         updates.videos = JSON.stringify(normalizedVideos);
         updates.videoUrl = normalizedVideos[0] || "";
+      }
+      if (media !== undefined) {
+        updates.media = JSON.stringify(media);
+      } else if (images !== undefined || videos !== undefined) {
+        // Listas trocadas sem a ordem: volta a ordem padrão (fotos, vídeos)
+        updates.media = null;
       }
       if (popular !== undefined) updates.popular = popular;
       if (stock !== undefined)
@@ -2268,6 +2321,16 @@ app.put(
           return updated.imageUrl ? [updated.imageUrl] : [];
         })(),
         videos: getProductVideos(updated),
+        media: getProductMedia(
+          updated,
+          (() => {
+            const parsedImages = parseJSON(updated.images);
+            if (Array.isArray(parsedImages) && parsedImages.length > 0) {
+              return parsedImages;
+            }
+            return updated.imageUrl ? [updated.imageUrl] : [];
+          })(),
+        ),
         price: parseFloat(updated.price),
         isAvailable: updated.stock === null || updated.stock > 0,
       });
