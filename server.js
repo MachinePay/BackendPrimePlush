@@ -843,20 +843,20 @@ async function initDatabase() {
         return res.status(404).json({ error: "Usuário não encontrado" });
       }
 
-      // Nota: Em produção, use bcrypt para comparar senhas!
-      if (user.password !== password) {
+      if (!verifyCustomerPassword(password, user.password)) {
         return res.status(401).json({ error: "Senha incorreta" });
+      }
+
+      // Senha antiga em texto puro: troca por hash agora
+      if (!isHashedCustomerPassword(user.password)) {
+        await db("users")
+          .where({ id: user.id })
+          .update({ password: hashCustomerPassword(password) });
       }
 
       res.json({
         success: true,
-        user: {
-          ...user,
-          historico:
-            typeof user.historico === "string"
-              ? JSON.parse(user.historico)
-              : user.historico,
-        },
+        user: sanitizeUser(user),
       });
     } catch (e) {
       console.error("❌ Erro ao autenticar usuário:", e);
@@ -1146,6 +1146,66 @@ const verifyStaffPassword = (password, salt, hash) => {
     return candidate.length === stored.length && crypto.timingSafeEqual(candidate, stored);
   } catch {
     return false;
+  }
+};
+
+// ---------- Senhas de clientes ----------
+// Guardadas como "scrypt$<salt>$<hash>". Senhas antigas em texto puro ainda
+// funcionam no login e são convertidas para hash (no login e na migração do
+// início do servidor).
+const CUSTOMER_HASH_PREFIX = "scrypt$";
+
+const isHashedCustomerPassword = (stored) =>
+  typeof stored === "string" && stored.startsWith(CUSTOMER_HASH_PREFIX);
+
+const hashCustomerPassword = (password) => {
+  const { salt, hash } = hashStaffPassword(password);
+  return `${CUSTOMER_HASH_PREFIX}${salt}$${hash}`;
+};
+
+const verifyCustomerPassword = (password, stored) => {
+  if (!stored) return false;
+  if (isHashedCustomerPassword(stored)) {
+    const [, salt, hash] = String(stored).split("$");
+    return verifyStaffPassword(password, salt, hash);
+  }
+  // Legado (texto puro): comparação em tempo constante
+  const a = Buffer.from(String(password));
+  const b = Buffer.from(String(stored));
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+};
+
+// Dados do cliente que podem sair do servidor: nunca a senha.
+const sanitizeUser = (user) => {
+  if (!user) return user;
+  const { password, ...rest } = user;
+  return {
+    ...rest,
+    historico: parseJSON(rest.historico),
+  };
+};
+
+// Converte para hash as senhas de clientes ainda em texto puro.
+const migrateCustomerPasswords = async () => {
+  try {
+    if (!(await db.schema.hasColumn("users", "password"))) return;
+    const rows = await db("users")
+      .select("id", "password")
+      .whereNotNull("password")
+      .whereNot("password", "")
+      .whereNot("password", "like", `${CUSTOMER_HASH_PREFIX}%`);
+    for (const row of rows) {
+      await db("users")
+        .where({ id: row.id })
+        .update({ password: hashCustomerPassword(row.password) });
+      // Libera o event loop entre os hashes
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    if (rows.length) {
+      console.log(`🔐 ${rows.length} senha(s) de cliente convertida(s) para hash`);
+    }
+  } catch (err) {
+    console.error("⚠️ Erro ao migrar senhas de clientes:", err);
   }
 };
 
@@ -3092,7 +3152,8 @@ app.post("/api/users/check-cpf", async (req, res) => {
     }
     const user = await db("users").where({ cpf: docClean }).first();
     if (user) {
-      return res.json({ exists: true, user });
+      // Só o necessário para a tela de senha ("Olá, Fulano!")
+      return res.json({ exists: true, user: { name: user.name } });
     } else {
       return res.json({ exists: false, requiresRegistration: true });
     }
@@ -3103,7 +3164,7 @@ app.post("/api/users/check-cpf", async (req, res) => {
 });
 
 // Buscar usuário por CPF ou CNPJ
-app.get("/api/users/cpf/:cpf", async (req, res) => {
+app.get("/api/users/cpf/:cpf", authenticateToken, authorizeAdmin, async (req, res) => {
   try {
     const docClean = String(req.params.cpf).replace(/\D/g, "");
 
@@ -3120,10 +3181,7 @@ app.get("/api/users/cpf/:cpf", async (req, res) => {
       return res.status(404).json({ error: "Usuário não encontrado" });
     }
 
-    res.json({
-      ...user,
-      historico: parseJSON(user.historico),
-    });
+    res.json(sanitizeUser(user));
   } catch (e) {
     console.error("❌ Erro ao buscar usuário por documento:", e);
     res.status(500).json({ error: "Erro ao buscar usuário" });
@@ -3135,10 +3193,7 @@ app.get("/api/users", authenticateToken, authorizeAdmin, async (req, res) => {
     const users = await db("users").select("*");
 
     // Mapeia os usuários garantindo que o histórico seja sempre um objeto/array válido
-    const formattedUsers = users.map((u) => ({
-      ...u,
-      historico: parseJSON(u.historico),
-    }));
+    const formattedUsers = users.map(sanitizeUser);
 
     res.json(formattedUsers);
   } catch (e) {
@@ -3216,10 +3271,6 @@ app.post("/api/users/register", async (req, res) => {
       console.log(`⚠️ Tentativa de cadastro duplicado: ${docClean}`);
       return res.status(409).json({
         error: "Este documento já está cadastrado",
-        user: {
-          ...exists,
-          historico: parseJSON(exists.historico),
-        },
       });
     }
 
@@ -3234,7 +3285,7 @@ app.post("/api/users/register", async (req, res) => {
     console.log(`📝 Cadastrando novo usuário: ${name} (${docClean})`);
 
     const newUser = {
-      password: password, // Lembrete: considere usar bcrypt no futuro para segurança
+      password: hashCustomerPassword(password),
       id: `user_${Date.now()}`,
       name: name.trim(),
       email: email.trim(),
@@ -3253,10 +3304,7 @@ app.post("/api/users/register", async (req, res) => {
 
     res.status(201).json({
       success: true,
-      user: {
-        ...newUser,
-        historico: [],
-      },
+      user: sanitizeUser({ ...newUser, historico: [] }),
     });
   } catch (e) {
     console.error("❌ Erro ao cadastrar usuário:", e);
@@ -3264,7 +3312,7 @@ app.post("/api/users/register", async (req, res) => {
   }
 });
 
-app.post("/api/users", async (req, res) => {
+app.post("/api/users", authenticateToken, authorizeAdmin, async (req, res) => {
   const { cpf, name, email, id } = req.body;
 
   if (!cpf)
@@ -3288,8 +3336,7 @@ app.post("/api/users", async (req, res) => {
         `ℹ️ Documento ${docClean} já cadastrado - retornando usuário existente`,
       );
       return res.json({
-        ...exists,
-        historico: parseJSON(exists.historico),
+        ...sanitizeUser(exists),
         message: "Usuário já existe - login realizado",
       });
     }
@@ -6966,16 +7013,13 @@ app.put("/api/users/:id", async (req, res) => {
         cep: cep.trim(),
         address: address.trim(),
         phone: phone.trim(),
-        password: password,
+        password: hashCustomerPassword(password),
       });
     // Retorna o usuário atualizado
     const updatedUser = await db("users").where({ id }).first();
     res.json({
       success: true,
-      user: {
-        ...updatedUser,
-        historico: parseJSON(updatedUser.historico),
-      },
+      user: sanitizeUser(updatedUser),
     });
   } catch (e) {
     console.error("Erro ao atualizar usuário:", e);
@@ -6995,6 +7039,8 @@ app.post("/api/point/configure", (req, res) => {
 console.log("🚀 Iniciando servidor...");
 Promise.all([initDatabase(), initRedis()])
   .then(() => {
+    // Em segundo plano: não atrasa o servidor subir
+    migrateCustomerPasswords();
     app.listen(PORT, "0.0.0.0", () => {
       console.log(`✅ Servidor rodando na porta ${PORT}`);
       console.log(
