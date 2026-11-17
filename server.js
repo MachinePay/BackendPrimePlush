@@ -597,6 +597,12 @@ async function initDatabase() {
     });
     console.log("✅ Tabela staff_users criada");
   }
+  if (!(await db.schema.hasColumn("staff_users", "email"))) {
+    await db.schema.table("staff_users", (table) => {
+      table.string("email");
+    });
+    console.log("✅ Coluna email adicionada à tabela staff_users");
+  }
 
   const hasOrders = await db.schema.hasTable("orders");
   if (!hasOrders) {
@@ -811,23 +817,27 @@ async function initDatabase() {
   // ...existing code...
   // ========== LOGIN POR CPF E SENHA ===========
   app.post("/api/users/login", async (req, res) => {
-    const { cpf, password } = req.body; // Mantemos 'cpf' no destructuring para não quebrar o contrato
+    const { cpf, email, password } = req.body; // Mantemos 'cpf' no destructuring para não quebrar o contrato
 
-    if (!cpf || !password) {
+    if ((!cpf && !email) || !password) {
       return res.status(400).json({ error: "Documento e senha obrigatórios" });
     }
 
-    const docClean = String(cpf).replace(/\D/g, "");
+    const docClean = String(cpf || "").replace(/\D/g, "");
+    const emailClean = normalizeEmail(email);
 
     // Validação de tamanho para evitar consultas desnecessárias
-    if (docClean.length !== 11 && docClean.length !== 14) {
+    if (!emailClean && docClean.length !== 11 && docClean.length !== 14) {
       return res
         .status(400)
         .json({ error: "Documento inválido. Deve ser CPF ou CNPJ." });
     }
 
     try {
-      const user = await db("users").where({ cpf: docClean }).first();
+      // Login pelo e-mail do cadastro ou pelo CPF/CNPJ
+      const user = emailClean
+        ? await db("users").whereRaw("lower(email) = ?", [emailClean]).first()
+        : await db("users").where({ cpf: docClean }).first();
 
       if (!user) {
         return res.status(404).json({ error: "Usuário não encontrado" });
@@ -1144,10 +1154,40 @@ const normalizeUsername = (value) =>
     .trim()
     .toLowerCase();
 
+const normalizeEmail = (value) =>
+  String(value || "")
+    .trim()
+    .toLowerCase();
+
+const isEmailLike = (value) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || ""));
+
+// Funcionário pelo usuário ou pelo e-mail (sem diferenciar maiúsculas).
+const findStaffByLogin = (login) => {
+  const value = normalizeUsername(login);
+  if (!value) return null;
+  return db("staff_users")
+    .where({ username: value })
+    .orWhereRaw("lower(email) = ?", [value])
+    .first();
+};
+
+// Valida/normaliza o e-mail do funcionário; "" = sem e-mail.
+const checkStaffEmail = async (rawEmail, currentId) => {
+  const email = normalizeEmail(rawEmail);
+  if (!email) return { email: null };
+  if (!isEmailLike(email)) return { error: "E-mail inválido." };
+  const query = db("staff_users").whereRaw("lower(email) = ?", [email]);
+  if (currentId) query.whereNot({ id: currentId });
+  const exists = await query.first();
+  if (exists) return { error: "Este e-mail já está em uso por outro funcionário." };
+  return { email };
+};
+
 const toPublicStaff = (row) => ({
   id: row.id,
   name: row.name,
   username: row.username,
+  email: row.email || null,
   permissions: sanitizePermissions(row.permissions),
   active: row.active === true || row.active === 1 || row.active === "1",
   createdAt: row.createdAt || null,
@@ -1217,7 +1257,7 @@ app.post("/api/auth/staff-login", async (req, res) => {
       .json({ success: false, message: "Erro de configuração no servidor." });
   }
   try {
-    const staff = await db("staff_users").where({ username }).first();
+    const staff = await findStaffByLogin(username);
     if (!staff || !verifyStaffPassword(password, staff.passwordSalt, staff.passwordHash)) {
       return res
         .status(401)
@@ -1295,12 +1335,15 @@ app.post(
     try {
       const exists = await db("staff_users").where({ username }).first();
       if (exists) return res.status(409).json({ error: "Este usuário já existe." });
+      const emailCheck = await checkStaffEmail(req.body?.email);
+      if (emailCheck.error) return res.status(409).json({ error: emailCheck.error });
       const { salt, hash } = hashStaffPassword(password);
       const now = new Date().toISOString();
       const row = {
         id: `staff_${crypto.randomUUID()}`,
         name,
         username,
+        email: emailCheck.email,
         passwordHash: hash,
         passwordSalt: salt,
         permissions: JSON.stringify(sanitizePermissions(req.body?.permissions)),
@@ -1345,6 +1388,11 @@ app.put(
           if (exists) return res.status(409).json({ error: "Este usuário já existe." });
         }
         updates.username = username;
+      }
+      if (req.body?.email !== undefined) {
+        const emailCheck = await checkStaffEmail(req.body.email, current.id);
+        if (emailCheck.error) return res.status(409).json({ error: emailCheck.error });
+        updates.email = emailCheck.email;
       }
       if (req.body?.password) {
         const password = String(req.body.password);
@@ -2986,6 +3034,53 @@ app.put(
 );
 
 // Verificar se CPF ou CNPJ existe (POST)
+// Tela de login: identifica se o que foi digitado (CPF/CNPJ, e-mail ou
+// usuário de funcionário) pertence a um cliente e/ou funcionário.
+// Devolve só o tipo e o primeiro nome, nunca os dados da conta.
+app.post("/api/auth/identify", async (req, res) => {
+  try {
+    const raw = String(req.body?.identifier || "").trim();
+    if (!raw) return res.status(400).json({ error: "Informe CPF, CNPJ ou e-mail." });
+
+    let customer = null;
+    let staff = null;
+    const digits = raw.replace(/\D/g, "");
+    const looksLikeDocument = !/[a-zA-Z@]/.test(raw);
+
+    if (looksLikeDocument) {
+      if (digits.length !== 11 && digits.length !== 14) {
+        return res
+          .status(400)
+          .json({ error: "Documento inválido. Digite 11 dígitos (CPF) ou 14 (CNPJ)." });
+      }
+      customer = await db("users").where({ cpf: digits }).first();
+    } else if (isEmailLike(raw)) {
+      const email = normalizeEmail(raw);
+      customer = await db("users").whereRaw("lower(email) = ?", [email]).first();
+      staff = await db("staff_users").whereRaw("lower(email) = ?", [email]).first();
+    } else {
+      staff = await db("staff_users").where({ username: normalizeUsername(raw) }).first();
+    }
+
+    const staffActive = staff ? toPublicStaff(staff).active : false;
+    const kinds = [];
+    if (staff && staffActive) kinds.push("staff");
+    if (customer) kinds.push("customer");
+    const firstName = (value) => String(value || "").trim().split(/\s+/)[0] || "";
+
+    res.json({
+      exists: kinds.length > 0,
+      kinds,
+      name: firstName((staff && staffActive && staff.name) || customer?.name),
+      isDocument: looksLikeDocument,
+      staffDisabled: Boolean(staff && !staffActive),
+    });
+  } catch (e) {
+    console.error("❌ Erro ao identificar login:", e);
+    res.status(500).json({ error: "Erro ao verificar login" });
+  }
+});
+
 app.post("/api/users/check-cpf", async (req, res) => {
   try {
     const { cpf } = req.body;
