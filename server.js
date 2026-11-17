@@ -13,6 +13,7 @@ import cors from "cors";
 import OpenAI from "openai";
 import knex from "knex";
 import jwt from "jsonwebtoken";
+import crypto from "crypto";
 import { createClient } from "redis";
 import { MercadoPagoConfig, Payment, Preference } from "mercadopago";
 import paymentRoutes from "./routes/payment.js";
@@ -578,6 +579,25 @@ async function initDatabase() {
     });
   }
 
+  // Funcionários com login próprio no painel admin e abas liberadas pelo
+  // admin master (quem entra com ADMIN_PASSWORD).
+  const hasStaffUsers = await db.schema.hasTable("staff_users");
+  if (!hasStaffUsers) {
+    await db.schema.createTable("staff_users", (table) => {
+      table.string("id").primary();
+      table.string("name").notNullable();
+      table.string("username").notNullable().unique();
+      table.string("passwordHash").notNullable();
+      table.string("passwordSalt").notNullable();
+      table.text("permissions").defaultTo("[]");
+      table.boolean("active").defaultTo(true);
+      table.string("createdAt");
+      table.string("updatedAt");
+      table.string("lastLoginAt");
+    });
+    console.log("✅ Tabela staff_users criada");
+  }
+
   const hasOrders = await db.schema.hasTable("orders");
   if (!hasOrders) {
     await db.schema.createTable("orders", (table) => {
@@ -1076,14 +1096,299 @@ const authenticateToken = (req, res, next) => {
   });
 };
 
-const authorizeAdmin = (req, res, next) => {
+// --- Funcionários (logins individuais do painel admin) ---
+
+// Abas que o admin master pode liberar para cada funcionário.
+const STAFF_PERMISSIONS = [
+  "dashboard",
+  "pedidos",
+  "clientes",
+  "produtos",
+  "categorias",
+  "banners",
+  "gestao",
+  "relatorios",
+  "valores",
+];
+
+const sanitizePermissions = (value) => {
+  let list = value;
+  if (typeof list === "string") {
+    try {
+      list = JSON.parse(list);
+    } catch {
+      list = [];
+    }
+  }
+  if (!Array.isArray(list)) return [];
+  return [...new Set(list.filter((p) => STAFF_PERMISSIONS.includes(p)))];
+};
+
+const hashStaffPassword = (password, salt = crypto.randomBytes(16).toString("hex")) => ({
+  salt,
+  hash: crypto.scryptSync(String(password), salt, 64).toString("hex"),
+});
+
+const verifyStaffPassword = (password, salt, hash) => {
+  try {
+    const candidate = Buffer.from(hashStaffPassword(password, salt).hash, "hex");
+    const stored = Buffer.from(String(hash), "hex");
+    return candidate.length === stored.length && crypto.timingSafeEqual(candidate, stored);
+  } catch {
+    return false;
+  }
+};
+
+const normalizeUsername = (value) =>
+  String(value || "")
+    .trim()
+    .toLowerCase();
+
+const toPublicStaff = (row) => ({
+  id: row.id,
+  name: row.name,
+  username: row.username,
+  permissions: sanitizePermissions(row.permissions),
+  active: row.active === true || row.active === 1 || row.active === "1",
+  createdAt: row.createdAt || null,
+  updatedAt: row.updatedAt || null,
+  lastLoginAt: row.lastLoginAt || null,
+});
+
+const authorizeAdmin = async (req, res, next) => {
   if (req.user.role !== "admin") {
     return res
       .status(403)
       .json({ error: "Acesso negado. Requer permissão de administrador." });
   }
+  // Token de funcionário: confere no banco a cada requisição, para que
+  // desativar o login ou mudar as abas valha na hora.
+  if (req.user.staffId) {
+    try {
+      const staff = await db("staff_users").where({ id: req.user.staffId }).first();
+      const publicStaff = staff ? toPublicStaff(staff) : null;
+      if (!publicStaff || !publicStaff.active) {
+        return res
+          .status(401)
+          .json({ error: "Login de funcionário desativado ou removido." });
+      }
+      req.user.isMaster = false;
+      req.user.permissions = publicStaff.permissions;
+      req.user.name = publicStaff.name;
+    } catch (err) {
+      console.error("Erro ao validar funcionário:", err);
+      return res.status(500).json({ error: "Erro ao validar acesso." });
+    }
+  } else {
+    req.user.isMaster = true;
+  }
   next();
 };
+
+// Só o admin master (senha ADMIN_PASSWORD), nunca um funcionário.
+const authorizeMaster = (req, res, next) => {
+  if (!req.user.isMaster) {
+    return res
+      .status(403)
+      .json({ error: "Apenas o administrador master pode fazer isso." });
+  }
+  next();
+};
+
+// Master sempre passa; funcionário precisa ter a aba liberada.
+const requireStaffPermission = (permission) => (req, res, next) => {
+  if (req.user.isMaster) return next();
+  if ((req.user.permissions || []).includes(permission)) return next();
+  return res.status(403).json({ error: "Seu login não tem acesso a esta área." });
+};
+
+// --- Login de funcionário (usuário + senha próprios) ---
+app.post("/api/auth/staff-login", async (req, res) => {
+  const username = normalizeUsername(req.body?.username);
+  const password = String(req.body?.password || "");
+  if (!username || !password) {
+    return res
+      .status(400)
+      .json({ success: false, message: "Usuário e senha são obrigatórios" });
+  }
+  if (!JWT_SECRET) {
+    return res
+      .status(500)
+      .json({ success: false, message: "Erro de configuração no servidor." });
+  }
+  try {
+    const staff = await db("staff_users").where({ username }).first();
+    if (!staff || !verifyStaffPassword(password, staff.passwordSalt, staff.passwordHash)) {
+      return res
+        .status(401)
+        .json({ success: false, message: "Usuário ou senha inválidos" });
+    }
+    const publicStaff = toPublicStaff(staff);
+    if (!publicStaff.active) {
+      return res
+        .status(403)
+        .json({ success: false, message: "Este login está desativado." });
+    }
+    await db("staff_users")
+      .where({ id: staff.id })
+      .update({ lastLoginAt: new Date().toISOString() });
+    const token = jwt.sign(
+      { role: "admin", staffId: staff.id, name: staff.name },
+      JWT_SECRET,
+      { expiresIn: "8h" },
+    );
+    console.log(`✅ Login de funcionário: ${username}`);
+    res.json({ success: true, token, staff: publicStaff });
+  } catch (err) {
+    console.error("Erro no login de funcionário:", err);
+    res.status(500).json({ success: false, message: "Erro ao fazer login." });
+  }
+});
+
+// Quem está logado no painel e quais abas pode ver.
+app.get("/api/auth/me", authenticateToken, authorizeAdmin, (req, res) => {
+  if (req.user.isMaster) {
+    return res.json({ master: true, name: "Administrador", permissions: STAFF_PERMISSIONS });
+  }
+  res.json({
+    master: false,
+    staffId: req.user.staffId,
+    name: req.user.name,
+    permissions: req.user.permissions,
+  });
+});
+
+app.get(
+  "/api/admin/staff",
+  authenticateToken,
+  authorizeAdmin,
+  authorizeMaster,
+  async (req, res) => {
+    try {
+      const rows = await db("staff_users").orderBy("name", "asc");
+      res.json({ staff: rows.map(toPublicStaff), permissions: STAFF_PERMISSIONS });
+    } catch (err) {
+      console.error("Erro ao listar funcionários:", err);
+      res.status(500).json({ error: "Erro ao listar funcionários" });
+    }
+  },
+);
+
+app.post(
+  "/api/admin/staff",
+  authenticateToken,
+  authorizeAdmin,
+  authorizeMaster,
+  async (req, res) => {
+    const name = String(req.body?.name || "").trim();
+    const username = normalizeUsername(req.body?.username);
+    const password = String(req.body?.password || "");
+    if (!name) return res.status(400).json({ error: "Informe o nome." });
+    if (!/^[a-z0-9._-]{3,40}$/.test(username)) {
+      return res.status(400).json({
+        error: "Usuário deve ter 3 a 40 caracteres (letras, números, ponto, - ou _).",
+      });
+    }
+    if (password.length < 4) {
+      return res.status(400).json({ error: "A senha deve ter pelo menos 4 caracteres." });
+    }
+    try {
+      const exists = await db("staff_users").where({ username }).first();
+      if (exists) return res.status(409).json({ error: "Este usuário já existe." });
+      const { salt, hash } = hashStaffPassword(password);
+      const now = new Date().toISOString();
+      const row = {
+        id: `staff_${crypto.randomUUID()}`,
+        name,
+        username,
+        passwordHash: hash,
+        passwordSalt: salt,
+        permissions: JSON.stringify(sanitizePermissions(req.body?.permissions)),
+        active: req.body?.active === false ? false : true,
+        createdAt: now,
+        updatedAt: now,
+      };
+      await db("staff_users").insert(row);
+      res.status(201).json({ staff: toPublicStaff(row) });
+    } catch (err) {
+      console.error("Erro ao criar funcionário:", err);
+      res.status(500).json({ error: "Erro ao criar funcionário" });
+    }
+  },
+);
+
+app.put(
+  "/api/admin/staff/:id",
+  authenticateToken,
+  authorizeAdmin,
+  authorizeMaster,
+  async (req, res) => {
+    try {
+      const current = await db("staff_users").where({ id: req.params.id }).first();
+      if (!current) return res.status(404).json({ error: "Funcionário não encontrado." });
+
+      const updates = { updatedAt: new Date().toISOString() };
+      if (req.body?.name !== undefined) {
+        const name = String(req.body.name).trim();
+        if (!name) return res.status(400).json({ error: "Informe o nome." });
+        updates.name = name;
+      }
+      if (req.body?.username !== undefined) {
+        const username = normalizeUsername(req.body.username);
+        if (!/^[a-z0-9._-]{3,40}$/.test(username)) {
+          return res.status(400).json({
+            error: "Usuário deve ter 3 a 40 caracteres (letras, números, ponto, - ou _).",
+          });
+        }
+        if (username !== current.username) {
+          const exists = await db("staff_users").where({ username }).first();
+          if (exists) return res.status(409).json({ error: "Este usuário já existe." });
+        }
+        updates.username = username;
+      }
+      if (req.body?.password) {
+        const password = String(req.body.password);
+        if (password.length < 4) {
+          return res
+            .status(400)
+            .json({ error: "A senha deve ter pelo menos 4 caracteres." });
+        }
+        const { salt, hash } = hashStaffPassword(password);
+        updates.passwordHash = hash;
+        updates.passwordSalt = salt;
+      }
+      if (req.body?.permissions !== undefined) {
+        updates.permissions = JSON.stringify(sanitizePermissions(req.body.permissions));
+      }
+      if (req.body?.active !== undefined) {
+        updates.active = Boolean(req.body.active);
+      }
+      await db("staff_users").where({ id: current.id }).update(updates);
+      const updated = await db("staff_users").where({ id: current.id }).first();
+      res.json({ staff: toPublicStaff(updated) });
+    } catch (err) {
+      console.error("Erro ao atualizar funcionário:", err);
+      res.status(500).json({ error: "Erro ao atualizar funcionário" });
+    }
+  },
+);
+
+app.delete(
+  "/api/admin/staff/:id",
+  authenticateToken,
+  authorizeAdmin,
+  authorizeMaster,
+  async (req, res) => {
+    try {
+      const deleted = await db("staff_users").where({ id: req.params.id }).del();
+      if (!deleted) return res.status(404).json({ error: "Funcionário não encontrado." });
+      res.json({ success: true });
+    } catch (err) {
+      console.error("Erro ao excluir funcionário:", err);
+      res.status(500).json({ error: "Erro ao excluir funcionário" });
+    }
+  },
+);
 
 const authorizeKitchen = (req, res, next) => {
   if (req.user.role !== "kitchen" && req.user.role !== "admin") {
@@ -1236,6 +1541,7 @@ app.get(
   "/api/admin/management-report",
   authenticateToken,
   authorizeAdmin,
+  requireStaffPermission("gestao"),
   async (req, res) => {
     try {
       const startAtRaw =
